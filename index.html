@@ -628,50 +628,33 @@ function sfSessionClear(){
   sessionStorage.removeItem('sf_pkce_verifier');
 }
 
-function sfBase64Url(bytes){
-  return btoa(String.fromCharCode(...new Uint8Array(bytes))).replace(/\+/g,'-').replace(/\//g,'_').replace(/=+$/,'');
-}
-async function sfPkcePair(){
-  const verifierBytes = new Uint8Array(32);
-  crypto.getRandomValues(verifierBytes);
-  const verifier = sfBase64Url(verifierBytes);
-  const challengeBytes = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(verifier));
-  return { verifier, challenge: sfBase64Url(challengeBytes) };
-}
-async function sfStartLogin(){
-  const {verifier, challenge} = await sfPkcePair();
-  sessionStorage.setItem('sf_pkce_verifier', verifier);
+/* User-Agent Flow (response_type=token): o Salesforce nao libera CORS no endpoint
+   /services/oauth2/token (testado ao vivo contra a org real - bloqueado mesmo com a origem
+   na allowlist de CORS), entao um POST via fetch pra trocar um code por token nao funciona
+   100% no navegador aqui. O User-Agent Flow evita esse POST: o proprio redirect de volta do
+   Salesforce ja traz o access_token no fragmento da URL (#access_token=...), sem chamada
+   extra - e o padrao que a Salesforce documenta pra apps 100% client-side como este.
+   Troca consciente: sem PKCE e sem refresh_token (a sessao expira e o corretor loga de novo) -
+   aceitavel pra um demo, nao recomendado pra producao com muitos usuarios. */
+function sfStartLogin(){
   const params = new URLSearchParams({
-    response_type:'code', client_id: SF_CONFIG.clientId, redirect_uri: SF_CONFIG.redirectUri,
-    code_challenge: challenge, code_challenge_method:'S256', scope:'api refresh_token',
+    response_type:'token', client_id: SF_CONFIG.clientId, redirect_uri: SF_CONFIG.redirectUri,
+    scope:'api',
   });
   window.location.href = `${SF_CONFIG.loginUrl}/services/oauth2/authorize?${params.toString()}`;
 }
-/* chamado uma vez no boot do app - se a URL voltou com ?code=... (redirect do Salesforce depois
-   do login), troca o code pelo access_token via PKCE (sem client secret, 100% no navegador) */
-async function sfHandleOAuthRedirect(){
-  const url = new URL(window.location.href);
-  const code = url.searchParams.get('code');
-  if(!code) return false;
-  const verifier = sessionStorage.getItem('sf_pkce_verifier');
-  url.searchParams.delete('code'); url.searchParams.delete('state');
-  history.replaceState({}, '', url.toString());
-  if(!verifier) return false;
-  try{
-    const body = new URLSearchParams({
-      grant_type:'authorization_code', code, client_id: SF_CONFIG.clientId,
-      redirect_uri: SF_CONFIG.redirectUri, code_verifier: verifier,
-    });
-    const resp = await fetch(`${SF_CONFIG.loginUrl}/services/oauth2/token`, {method:'POST', headers:{'Content-Type':'application/x-www-form-urlencoded'}, body});
-    if(!resp.ok) throw new Error('Falha na troca do code por token');
-    const tok = await resp.json();
-    sfSessionSet({accessToken: tok.access_token, instanceUrl: tok.instance_url});
-    sessionStorage.removeItem('sf_pkce_verifier');
-    return true;
-  }catch(e){
-    console.error('OAuth token exchange falhou', e);
-    return false;
-  }
+/* chamado uma vez no boot do app - se a URL voltou com #access_token=...&instance_url=...
+   (redirect do Salesforce depois do login), le direto do fragmento, sem chamada de rede */
+function sfHandleOAuthRedirect(){
+  const hash = window.location.hash.startsWith('#') ? window.location.hash.slice(1) : '';
+  if(!hash) return false;
+  const params = new URLSearchParams(hash);
+  const accessToken = params.get('access_token');
+  const instanceUrl = params.get('instance_url');
+  history.replaceState({}, '', window.location.pathname + window.location.search);
+  if(!accessToken || !instanceUrl) return false;
+  sfSessionSet({accessToken, instanceUrl});
+  return true;
 }
 async function sfApi(path, opts={}){
   const session = sfSessionGet();
@@ -695,6 +678,13 @@ function sfEstoqueToStatus(codigo){
 /* achata a arvore torres->blocos->pavimentos->unidades da API real pro formato flat que
    screenEmpDetail/torreSection/unitTile/screenUnidadeDetail ja esperam (DB.units) - nenhuma
    dessas telas precisa mudar. */
+/* Torre.Name na org real vem como "<Empreendimento> - Torre A" (mesma convencao do
+   Product2.Name) - o app so quer o "A" pra montar o codigo da unidade (unitCode) e o
+   cabecalho "Torre A" (torreSection), senao repete o nome do empreendimento nos dois. */
+function sfNomeCurtoTorre(nome){
+  const m = /torre\s+(\S+)\s*$/i.exec(nome||'');
+  return m ? m[1] : (nome||'');
+}
 function sfMapDetalheParaUnits(empId, detalhe){
   const units = [];
   (detalhe.torres||[]).forEach(torre=>{
@@ -703,7 +693,7 @@ function sfMapDetalheParaUnits(empId, detalhe){
         (pav.unidades||[]).forEach(u=>{
           const suites = parseInt(u.suites, 10) || 0;
           units.push({
-            id:u.id, empId, torre:torre.name, andar:u.andar, apto:parseInt(u.posicao,10)||0,
+            id:u.id, empId, torre:sfNomeCurtoTorre(torre.name), andar:u.andar, apto:parseInt(u.posicao,10)||0,
             dorm:suites, suite:suites, metragem:u.areaPrivativa||0,
             vaga:parseInt(u.vagas,10)||0, valor:u.valorTotal||0,
             status: sfEstoqueToStatus(u.estoqueComercial),
