@@ -271,6 +271,47 @@
   .kv-row .k{color:var(--text-muted);}
   .kv-row .v{font-weight:600; font-family:'IBM Plex Mono';}
 
+  /* checklist de documentos real (IDP) - inspirado no componente do Salesforce (caIdpDocumentProcessor) */
+  .doc-card{background:var(--surface); border:1px solid var(--border); border-radius:16px; padding:13px 14px;}
+  .doc-card + .doc-card{margin-top:10px;}
+  .doc-top{display:flex; align-items:flex-start; gap:11px;}
+  .doc-icon{width:36px; height:36px; border-radius:11px; flex:0 0 auto; display:flex; align-items:center; justify-content:center; background:var(--surface-2); color:var(--text-muted);}
+  .doc-icon svg{width:18px; height:18px;}
+  .doc-icon.on{background:color-mix(in srgb, var(--status-available) 14%, transparent); color:var(--status-available);}
+  .doc-icon.warn{background:color-mix(in srgb, var(--status-sold) 14%, transparent); color:var(--status-sold);}
+  .doc-name{font-weight:700; font-size:13.5px;}
+  .doc-req{color:var(--status-sold); font-weight:700; margin-left:2px;}
+  .doc-hint{font-size:11px; color:var(--text-muted); margin-top:1px;}
+  .doc-file{font-size:11.5px; color:var(--text-muted); margin-top:2px; display:flex; align-items:center; gap:5px;}
+  .doc-file svg{width:11px; height:11px; flex:0 0 auto; color:var(--status-available);}
+  .doc-actions{display:flex; align-items:center; gap:7px; flex:0 0 auto; margin-left:auto;}
+  .doc-pill{display:inline-flex; align-items:center; gap:5px; font-size:10.5px; font-weight:700; padding:4px 8px; border-radius:999px; white-space:nowrap;}
+  .doc-pill::before{content:''; width:6px; height:6px; border-radius:50%; background:currentColor;}
+  .doc-pill.neutral{background:var(--surface-2); color:var(--text-muted);}
+  .doc-pill.warn{background:color-mix(in srgb, var(--status-reserved) 16%, transparent); color:var(--status-reserved);}
+  .doc-pill.ok{background:color-mix(in srgb, var(--status-available) 14%, transparent); color:var(--status-available);}
+  .doc-pill.err{background:color-mix(in srgb, var(--status-sold) 14%, transparent); color:var(--status-sold);}
+  .doc-camerabtn{width:32px; height:32px; border-radius:50%; border:1px solid var(--border); background:var(--surface); display:flex; align-items:center; justify-content:center; color:var(--accent); cursor:pointer; flex:0 0 auto;}
+  .doc-camerabtn svg{width:15px; height:15px;}
+  .doc-camerabtn:disabled{opacity:.5;}
+
+  .field-grid{display:grid; grid-template-columns:1fr 1fr; gap:8px; margin-top:11px;}
+  .field-card{background:var(--surface-2); border-radius:11px; padding:8px 10px;}
+  .field-card .fl{font-size:10px; font-weight:700; text-transform:uppercase; letter-spacing:.02em; color:var(--text-muted);}
+  .field-card .fv{font-size:12.5px; font-weight:600; margin-top:2px; overflow-wrap:anywhere;}
+
+  .titular-box{margin-top:11px; padding:9px 11px; border-radius:12px; border:1px solid var(--border); border-left-width:3px; background:var(--surface-2);}
+  .titular-box.ok{border-left-color:var(--status-available);}
+  .titular-box.warn{border-left-color:var(--status-reserved);}
+  .titular-box.err{border-left-color:var(--status-sold);}
+  .titular-head{display:flex; align-items:center; gap:7px; font-size:12.5px; font-weight:700;}
+  .titular-head svg{width:15px; height:15px; flex:0 0 auto;}
+  .titular-head.ok{color:var(--status-available);}
+  .titular-head.warn{color:var(--status-reserved);}
+  .titular-head.err{color:var(--status-sold);}
+  .titular-line{font-size:11.5px; color:var(--text-muted); margin-top:4px; padding-left:22px;}
+  .titular-line b{color:var(--text); font-weight:600;}
+
   .price-hero{background:var(--chrome-bg); border:1px solid var(--chrome-border); border-radius:16px; padding:16px; margin:14px 0;}
   .price-hero .label{color:var(--chrome-text-muted); font-size:12px;}
   .price-hero .amount{font-family:'IBM Plex Mono'; font-size:26px; font-weight:600; letter-spacing:-.01em; color:var(--chrome-accent);}
@@ -422,6 +463,7 @@ const I = {
   calendar:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4.5" width="18" height="16" rx="2.2"/><path d="M3 9.5h18"/><path d="M8 2.5v4M16 2.5v4"/><path d="M8 13.5h2M8 17h2M14 13.5h2M14 17h2"/></svg>',
   wallet:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M20 7H5a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h15a1 1 0 0 0 1-1v-3"/><path d="M2.5 9.5V6a2 2 0 0 1 2-2h11"/><path d="M17.5 14.5h3a1 1 0 0 0 1-1v-3a1 1 0 0 0-1-1h-3a2.5 2.5 0 0 0 0 5z"/></svg>',
   logout:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><path d="M16 17l5-5-5-5"/><path d="M21 12H9"/></svg>',
+  camera:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 8.5a2 2 0 0 1 2-2h1.2l1-1.7A2 2 0 0 1 9.9 3.8h4.2a2 2 0 0 1 1.7 1l1 1.7H18a2 2 0 0 1 2 2V18a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2Z"/><circle cx="12" cy="13" r="3.4"/></svg>',
   /* icones das comodidades dos empreendimentos (ver AMENITIES) */
   pool:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M2 9c1.5-1.2 3-1.2 4.5 0s3 1.2 4.5 0 3-1.2 4.5 0 3 1.2 4.5 0"/><path d="M2 14c1.5-1.2 3-1.2 4.5 0s3 1.2 4.5 0 3-1.2 4.5 0 3 1.2 4.5 0"/><path d="M2 19c1.5-1.2 3-1.2 4.5 0s3 1.2 4.5 0 3-1.2 4.5 0 3 1.2 4.5 0"/></svg>',
   spa:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M6 20c0-7 4-11 12-13-1 9-5 13-12 13z"/><path d="M6 20c2-3 5-6 10-9"/></svg>',
@@ -908,7 +950,7 @@ async function sfCarregarDocumentos(contaId){
   try{
     const checklist = await sfApi(`/documentos?contaId=${contaId}`);
     const c = clienteById(contaId);
-    if(c) c.documentosReais = (checklist.documentos||[]).map(d=>({...d, campos:null}));
+    if(c) c.documentosReais = (checklist.documentos||[]).map(d=>({...d, campos:null, titularidade:null}));
   }catch(e){
     state.sfDocumentosCarregados[contaId] = false;
     console.error('Nao foi possivel carregar os documentos', e);
@@ -939,7 +981,7 @@ function handleDocUploadChange(ev){
       const d = c && c.documentosReais && c.documentosReais.find(x=>x.tipoDocumento===tipoDocumento);
       if(d){
         Object.assign(d, {hasFile:true, status:'uploaded', statusLabel:res.status, confianca:res.confidence,
-          contentDocumentId:res.contentDocumentId, fileName:file.name, campos:res.campos||[]});
+          contentDocumentId:res.contentDocumentId, fileName:file.name, campos:res.campos||[], titularidade:res.titularidade||null});
       }
       render();
       toast(res.status==='Verde' ? 'Documento enviado e processado' : 'Documento enviado - revisao necessaria');
@@ -962,7 +1004,7 @@ function sfVerDadosDocumento(clienteId, tipoDocumento, contentDocumentId){
     state.sfDocProcessando[key] = false;
     const c = clienteById(clienteId);
     const d = c && c.documentosReais && c.documentosReais.find(x=>x.tipoDocumento===tipoDocumento);
-    if(d) Object.assign(d, {statusLabel:res.status, confianca:res.confidence, campos:res.campos||[]});
+    if(d) Object.assign(d, {statusLabel:res.status, confianca:res.confidence, campos:res.campos||[], titularidade:res.titularidade||null});
     render();
   }).catch(e=>{
     state.sfDocProcessando[key] = false;
@@ -1118,6 +1160,19 @@ function documentosChecklist(cliente){
     </div>
   `;
 }
+/* icone por tipo de documento (mesma linguagem visual do card do Empreendimento/Conta) */
+function docTipoIcon(tipoDocumento){
+  if(tipoDocumento==='DocumentacaoPessoal') return I.idcard;
+  if(tipoDocumento==='ComprovanteResidencia') return I.pin;
+  if(tipoDocumento==='ComprovanteRenda' || tipoDocumento==='ExtratoBancario') return I.wallet;
+  return I.emptyDoc;
+}
+/* texto de apoio ao corretor por tipo - so o Documentacao Pessoal precisa explicar
+   que qualquer um dos 3 documentos serve (pedido do Denis) */
+function docTipoHint(tipoDocumento){
+  if(tipoDocumento==='DocumentacaoPessoal') return 'Envie RG, CPF ou CNH - qualquer um dos tres serve';
+  return '';
+}
 function documentosChecklistReal(cliente){
   sfCarregarDocumentos(cliente.id);
   const docs = cliente.documentosReais || [];
@@ -1139,37 +1194,56 @@ function documentoRowReal(clienteId, d){
   const uploading = state.sfDocUploading[key];
   const processando = state.sfDocProcessando[key];
   const aplicando = state.sfDocAplicando[key];
-  const corSts = d.statusLabel==='Verde' ? 'var(--status-available)' : d.statusLabel==='Vermelho' ? 'var(--status-sold)' : null;
+  const iconCls = !d.hasFile ? '' : d.statusLabel==='Verde' ? 'on' : d.statusLabel==='Vermelho' ? 'warn' : '';
+  const pillCls = !d.hasFile ? 'neutral' : d.statusLabel==='Verde' ? 'ok' : d.statusLabel==='Vermelho' ? 'err' : 'warn';
+  const pillTxt = !d.hasFile ? 'Pendente' : (d.statusLabel || 'Enviado');
+  const hint = docTipoHint(d.tipoDocumento);
   return `
-    <div class="list-card" style="cursor:default; flex-direction:column; align-items:stretch;">
-      <div style="display:flex; align-items:center; gap:8px; width:100%;">
+    <div class="doc-card">
+      <div class="doc-top">
+        <div class="doc-icon ${iconCls}">${docTipoIcon(d.tipoDocumento)}</div>
         <div style="flex:1; min-width:0;">
-          <div style="font-weight:600; font-size:13.5px;">${d.label}${d.obrigatorio?' <span class="muted" style="font-size:11px;">(obrigatorio)</span>':''}</div>
-          <div class="muted" style="font-size:11.5px;">${d.hasFile ? (d.fileName||'Documento enviado') : 'Aguardando envio'}</div>
+          <div class="doc-name">${d.label}${d.obrigatorio?'<span class="doc-req" title="Documento obrigatorio">*</span>':''}</div>
+          ${hint ? `<div class="doc-hint">${hint}</div>` : ''}
+          <div class="doc-file">${d.hasFile ? (I.check+ (d.fileName||'Documento enviado')) : 'Aguardando envio'}</div>
         </div>
-        <div style="display:flex; align-items:center; gap:8px; flex:0 0 auto;">
-          ${d.hasFile ? `<span class="badge" style="${corSts?`background:${corSts}22; color:${corSts};`:''}">${d.statusLabel||'Enviado'}</span>` : `<span class="badge badge-reserved">Pendente</span>`}
-          <button class="btn-ghost" style="padding:6px 4px; font-size:12px;" ${uploading?'disabled':''} onclick="iniciarUploadDocumento('${clienteId}','${d.tipoDocumento}')">
-            ${uploading? '<span class="spinner"></span>' : (d.hasFile ? 'Trocar' : 'Anexar')}
+        <div class="doc-actions">
+          <span class="doc-pill ${pillCls}">${pillTxt}</span>
+          <button class="doc-camerabtn" title="${d.hasFile?'Trocar arquivo':'Anexar (camera ou galeria)'}" ${uploading?'disabled':''} onclick="iniciarUploadDocumento('${clienteId}','${d.tipoDocumento}')">
+            ${uploading? '<span class="spinner"></span>' : I.camera}
           </button>
         </div>
       </div>
       ${d.hasFile ? `
-        <div style="margin-top:8px;">
-          ${!d.campos ? `
-            <button class="btn-ghost" style="font-size:12px; padding:4px 2px;" ${processando?'disabled':''} onclick="sfVerDadosDocumento('${clienteId}','${d.tipoDocumento}','${d.contentDocumentId}')">
-              ${processando? '<span class="spinner"></span> Lendo dados...' : 'Ver dados extraidos'}
-            </button>
-          ` : d.campos.length ? `
-            <div class="kv-table" style="margin-bottom:8px;">
-              ${d.campos.map(c=>`<div class="kv-row"><span class="k">${c.label||c.key}</span><span class="v" style="font-family:inherit; font-weight:500; text-align:right; max-width:62%;">${c.value||'-'}</span></div>`).join('')}
-            </div>
-            <button class="btn btn-secondary" style="font-size:12.5px; padding:8px;" ${aplicando?'disabled':''} onclick="aplicarDocumento('${clienteId}','${d.tipoDocumento}')">
-              ${aplicando? '<span class="spinner"></span> Aplicando...' : 'Aplicar dados a conta'}
-            </button>
-          ` : `<div class="muted" style="font-size:11.5px;">Nenhum campo extraido deste documento.</div>`}
-        </div>
+        ${!d.campos ? `
+          <button class="btn-ghost" style="font-size:12px; padding:8px 2px 0;" ${processando?'disabled':''} onclick="sfVerDadosDocumento('${clienteId}','${d.tipoDocumento}','${d.contentDocumentId}')">
+            ${processando? '<span class="spinner"></span> Lendo dados...' : 'Ver dados extraidos'}
+          </button>
+        ` : d.campos.length ? `
+          ${titularidadeBox(d.titularidade)}
+          <div class="field-grid">
+            ${d.campos.map(c=>`<div class="field-card"><div class="fl">${(c.label||c.key).replace(/_/g,' ')}</div><div class="fv">${c.value||'-'}</div></div>`).join('')}
+          </div>
+          <button class="btn btn-secondary" style="font-size:12.5px; padding:9px; margin-top:9px; width:100%;" ${aplicando?'disabled':''} onclick="aplicarDocumento('${clienteId}','${d.tipoDocumento}')">
+            ${aplicando? '<span class="spinner"></span> Aplicando...' : 'Aplicar dados a conta'}
+          </button>
+        ` : `<div class="muted" style="font-size:11.5px; margin-top:8px;">Nenhum campo extraido deste documento.</div>`}
       ` : ''}
+    </div>
+  `;
+}
+/* confronto conta x documento (CA_IdpTitularidadeService, ja construido no Service real) -
+   mostra o alerta ANTES dos campos, igual ao componente do Salesforce: se o nome/CPF do
+   documento nao bater com o da conta, o corretor ve isso antes de aplicar qualquer dado. */
+function titularidadeBox(t){
+  if(!t || !t.rotulo) return '';
+  const cls = t.status==='confirmado' ? 'ok' : t.status==='divergente' ? 'err' : t.status==='verificar' ? 'warn' : '';
+  const icon = t.status==='confirmado' ? I.check : I.alert;
+  return `
+    <div class="titular-box ${cls}">
+      <div class="titular-head ${cls}">${icon}<span>${t.rotulo}</span></div>
+      ${t.nomeDocumento ? `<div class="titular-line">Nome: <b>${t.nomeConta||'-'}</b> (conta) vs <b>${t.nomeDocumento}</b> (documento)</div>` : ''}
+      ${t.cpfDocumento || t.cpfConta ? `<div class="titular-line">CPF: <b>${t.cpfConta||'-'}</b> (conta) vs <b>${t.cpfDocumento||'-'}</b> (documento) - ${t.cpfRotulo||''}</div>` : ''}
     </div>
   `;
 }
