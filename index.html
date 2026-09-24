@@ -865,6 +865,7 @@ async function sfCarregarContaDetalhe(id){
     Object.assign(c, {
       nome: d.nome || c.nome, cpf: d.cpf || '-', rg: d.rg || '-', telefone: d.telefone || '',
       email: d.email || '', estadoCivil: d.estadoCivil || '-', profissao: d.profissao || '-',
+      renda: d.renda || 0, empreendimentoInteresseNome: d.empreendimentoNome || null,
       endereco: [d.endereco&&d.endereco.logradouro, d.endereco&&d.endereco.numero, d.endereco&&d.endereco.bairro, d.endereco&&d.endereco.cidade, d.endereco&&d.endereco.estado].filter(Boolean).join(', '),
       reservasReais: (d.reservas||[]).map(r=>({
         id: r.id, status: r.status, valor: r.valor,
@@ -897,6 +898,98 @@ async function sfCarregarBoletos(clienteId){
 /* reservas reais do corretor - substitui DB.reservas (antes so ganhava itens durante a sessao
    que os criava, nunca mostrava o que ja existia no Salesforce, incluindo se a Cotacao ja foi
    criada por outro caminho, ex.: pelo Simulador de Vendas dentro da Oportunidade). */
+/* checklist real de documentos (CA_RestDocumentos -> CA_IdpDocumentosService) - mesmos 5 tipos
+   exigidos no LWC interno (RG, CPF, Comprovante de Renda, Comprovante de Residencia, Extrato
+   Bancario, via CA_TipoDocumentoIDP__mdt), com extracao simulada (IDP) e aplicacao dos campos
+   na conta. So carrega pra clientes reais - mock continua no fluxo antigo (toggleDocumento). */
+async function sfCarregarDocumentos(contaId){
+  if(state.sfDocumentosCarregados[contaId]) return;
+  state.sfDocumentosCarregados[contaId] = true;
+  try{
+    const checklist = await sfApi(`/documentos?contaId=${contaId}`);
+    const c = clienteById(contaId);
+    if(c) c.documentosReais = (checklist.documentos||[]).map(d=>({...d, campos:null}));
+  }catch(e){
+    state.sfDocumentosCarregados[contaId] = false;
+    console.error('Nao foi possivel carregar os documentos', e);
+  }
+  render();
+}
+/* dispara o seletor de arquivo (camera ou galeria) pro tipo de documento clicado */
+function iniciarUploadDocumento(clienteId, tipoDocumento){
+  state.docUploadTarget = {clienteId, tipoDocumento};
+  document.getElementById('doc-upload-input').click();
+}
+function handleDocUploadChange(ev){
+  const file = ev.target.files && ev.target.files[0];
+  const target = state.docUploadTarget;
+  ev.target.value = '';
+  if(!file || !target) return;
+  const {clienteId, tipoDocumento} = target;
+  const key = `${clienteId}_${tipoDocumento}`;
+  const reader = new FileReader();
+  reader.onload = () => {
+    state.sfDocUploading[key] = true;
+    render();
+    sfApi('/documentos', {method:'POST', body: JSON.stringify({
+      contaId: clienteId, tipoDocumento, fileName: file.name, base64Data: reader.result,
+    })}).then(res=>{
+      state.sfDocUploading[key] = false;
+      const c = clienteById(clienteId);
+      const d = c && c.documentosReais && c.documentosReais.find(x=>x.tipoDocumento===tipoDocumento);
+      if(d){
+        Object.assign(d, {hasFile:true, status:'uploaded', statusLabel:res.status, confianca:res.confidence,
+          contentDocumentId:res.contentDocumentId, fileName:file.name, campos:res.campos||[]});
+      }
+      render();
+      toast(res.status==='Verde' ? 'Documento enviado e processado' : 'Documento enviado - revisao necessaria');
+    }).catch(e=>{
+      state.sfDocUploading[key] = false;
+      render();
+      toast('Nao foi possivel enviar o documento: '+e.message);
+    });
+  };
+  reader.readAsDataURL(file);
+}
+/* documentos ja enviados numa sessao anterior nao trazem os campos extraidos no checklist -
+   busca sob demanda (usa o cache do IDP no Salesforce, sem reprocessar) so quando o corretor
+   pede pra ver os dados. */
+function sfVerDadosDocumento(clienteId, tipoDocumento, contentDocumentId){
+  const key = `${clienteId}_${tipoDocumento}`;
+  state.sfDocProcessando[key] = true;
+  render();
+  sfApi(`/documentos/${contentDocumentId}/reprocessar`, {method:'POST', body:'{}'}).then(res=>{
+    state.sfDocProcessando[key] = false;
+    const c = clienteById(clienteId);
+    const d = c && c.documentosReais && c.documentosReais.find(x=>x.tipoDocumento===tipoDocumento);
+    if(d) Object.assign(d, {statusLabel:res.status, confianca:res.confidence, campos:res.campos||[]});
+    render();
+  }).catch(e=>{
+    state.sfDocProcessando[key] = false;
+    render();
+    toast('Nao foi possivel ler os dados do documento: '+e.message);
+  });
+}
+/* aplica os campos extraidos na conta - o corretor revisa na tela e confirma; se nao houver
+   mapeamento pro tipo de documento (ex: Comprovante de Renda), o Salesforce so avisa, sem erro. */
+function aplicarDocumento(clienteId, tipoDocumento){
+  const c = clienteById(clienteId);
+  const d = c && c.documentosReais && c.documentosReais.find(x=>x.tipoDocumento===tipoDocumento);
+  const campos = (d && d.campos) || [];
+  const key = `${clienteId}_${tipoDocumento}`;
+  state.sfDocAplicando[key] = true;
+  render();
+  sfApi(`/documentos/${clienteId}/aplicar`, {method:'POST', body: JSON.stringify({tipoDocumento, campos})}).then(res=>{
+    state.sfDocAplicando[key] = false;
+    state.sfContasCarregadas[clienteId] = false;
+    sfCarregarContaDetalhe(clienteId);
+    toast(res.observacoes || 'Dados aplicados a conta');
+  }).catch(e=>{
+    state.sfDocAplicando[key] = false;
+    render();
+    toast('Nao foi possivel aplicar os dados: '+e.message);
+  });
+}
 async function sfCarregarReservas(){
   try{
     const reservas = await sfApi('/reservas');
@@ -983,14 +1076,26 @@ function toggleDocumento(clienteId, tipo){
   if(doc) doc.status = doc.status==='enviado' ? 'pendente' : 'enviado';
   render();
 }
-/* selo compacto (ex: "2/4 docs") pra usar em listas - verde quando completo, ambar quando falta algo */
+/* selo compacto (ex: "2/4 docs") pra usar em listas - verde quando completo, ambar quando falta algo.
+   Conta real so mostra o selo depois que a checklist real ja foi carregada (evita contar mock). */
 function docsBadgeMini(cliente){
+  if(cliente.real){
+    if(!cliente.documentosReais) return '';
+    const obrig = cliente.documentosReais.filter(d=>d.obrigatorio);
+    const enviados = obrig.filter(d=>d.hasFile).length;
+    const cls = enviados===obrig.length ? 'badge-available' : 'badge-reserved';
+    return `<span class="badge ${cls}" style="font-size:10px; padding:3px 7px;">${enviados}/${obrig.length} docs</span>`;
+  }
   const {enviados, total} = docsResumo(cliente);
   const cls = enviados===total ? 'badge-available' : 'badge-reserved';
   return `<span class="badge ${cls}" style="font-size:10px; padding:3px 7px;">${enviados}/${total} docs</span>`;
 }
-/* checklist completo (usado na Conta e no passo 1 do assistente de Nova Reserva) */
+/* checklist completo (usado na Conta e no passo 1 do assistente de Nova Reserva). Conta real usa
+   os documentos de verdade (CA_TipoDocumentoIDP__mdt via CA_RestDocumentos), com upload real
+   (camera/galeria), extracao simulada (IDP) e aplicacao dos campos na conta; conta mock mantem
+   o toggle antigo, sem tocar em Salesforce. */
 function documentosChecklist(cliente){
+  if(cliente.real) return documentosChecklistReal(cliente);
   const {docs, enviados, total} = docsResumo(cliente);
   return `
     <div class="section-title" style="display:flex; align-items:center; justify-content:space-between; gap:8px;">
@@ -1010,6 +1115,61 @@ function documentosChecklist(cliente){
           </div>
         </div>
       `).join('')}
+    </div>
+  `;
+}
+function documentosChecklistReal(cliente){
+  sfCarregarDocumentos(cliente.id);
+  const docs = cliente.documentosReais || [];
+  const obrig = docs.filter(d=>d.obrigatorio);
+  const enviados = obrig.filter(d=>d.hasFile).length;
+  return `
+    <input type="file" id="doc-upload-input" accept="image/*,.pdf" capture="environment" style="display:none;" onchange="handleDocUploadChange(event)">
+    <div class="section-title" style="display:flex; align-items:center; justify-content:space-between; gap:8px;">
+      <span>Documentos</span>
+      ${docs.length ? `<span class="muted" style="font-size:12px; font-weight:600;">${enviados}/${obrig.length} obrigatorios</span>` : ''}
+    </div>
+    <div class="stack" style="margin-bottom:6px;">
+      ${!docs.length ? `<div class="muted" style="font-size:12px; padding:8px 2px;">Carregando checklist...</div>` : docs.map(d=>documentoRowReal(cliente.id, d)).join('')}
+    </div>
+  `;
+}
+function documentoRowReal(clienteId, d){
+  const key = `${clienteId}_${d.tipoDocumento}`;
+  const uploading = state.sfDocUploading[key];
+  const processando = state.sfDocProcessando[key];
+  const aplicando = state.sfDocAplicando[key];
+  const corSts = d.statusLabel==='Verde' ? 'var(--status-available)' : d.statusLabel==='Vermelho' ? 'var(--status-sold)' : null;
+  return `
+    <div class="list-card" style="cursor:default; flex-direction:column; align-items:stretch;">
+      <div style="display:flex; align-items:center; gap:8px; width:100%;">
+        <div style="flex:1; min-width:0;">
+          <div style="font-weight:600; font-size:13.5px;">${d.label}${d.obrigatorio?' <span class="muted" style="font-size:11px;">(obrigatorio)</span>':''}</div>
+          <div class="muted" style="font-size:11.5px;">${d.hasFile ? (d.fileName||'Documento enviado') : 'Aguardando envio'}</div>
+        </div>
+        <div style="display:flex; align-items:center; gap:8px; flex:0 0 auto;">
+          ${d.hasFile ? `<span class="badge" style="${corSts?`background:${corSts}22; color:${corSts};`:''}">${d.statusLabel||'Enviado'}</span>` : `<span class="badge badge-reserved">Pendente</span>`}
+          <button class="btn-ghost" style="padding:6px 4px; font-size:12px;" ${uploading?'disabled':''} onclick="iniciarUploadDocumento('${clienteId}','${d.tipoDocumento}')">
+            ${uploading? '<span class="spinner"></span>' : (d.hasFile ? 'Trocar' : 'Anexar')}
+          </button>
+        </div>
+      </div>
+      ${d.hasFile ? `
+        <div style="margin-top:8px;">
+          ${!d.campos ? `
+            <button class="btn-ghost" style="font-size:12px; padding:4px 2px;" ${processando?'disabled':''} onclick="sfVerDadosDocumento('${clienteId}','${d.tipoDocumento}','${d.contentDocumentId}')">
+              ${processando? '<span class="spinner"></span> Lendo dados...' : 'Ver dados extraidos'}
+            </button>
+          ` : d.campos.length ? `
+            <div class="kv-table" style="margin-bottom:8px;">
+              ${d.campos.map(c=>`<div class="kv-row"><span class="k">${c.label||c.key}</span><span class="v" style="font-family:inherit; font-weight:500; text-align:right; max-width:62%;">${c.value||'-'}</span></div>`).join('')}
+            </div>
+            <button class="btn btn-secondary" style="font-size:12.5px; padding:8px;" ${aplicando?'disabled':''} onclick="aplicarDocumento('${clienteId}','${d.tipoDocumento}')">
+              ${aplicando? '<span class="spinner"></span> Aplicando...' : 'Aplicar dados a conta'}
+            </button>
+          ` : `<div class="muted" style="font-size:11.5px;">Nenhum campo extraido deste documento.</div>`}
+        </div>
+      ` : ''}
     </div>
   `;
 }
@@ -1155,6 +1315,7 @@ const state = {
   visitaDraft:null,
   sfEmpreendimentosLoaded:false, sfEmpreendimentosError:null, sfDetalhesCarregados:{}, sfUsuarioNome:null,
   sfFotosCache:{}, sfVisitasCarregadas:{}, sfContasCarregadas:{}, sfGaleriaCache:{}, sfBoletosCarregados:{},
+  sfDocumentosCarregados:{}, sfDocUploading:{}, sfDocProcessando:{}, sfDocAplicando:{}, docUploadTarget:null,
 };
 
 function go(screen, params={}){ state.stacks[state.tab].push({screen, params}); render({resetScroll:true}); }
@@ -1280,6 +1441,11 @@ function doLogout(){
   state.sfVisitasCarregadas = {};
   state.sfContasCarregadas = {};
   state.sfBoletosCarregados = {};
+  state.sfDocumentosCarregados = {};
+  state.sfDocUploading = {};
+  state.sfDocProcessando = {};
+  state.sfDocAplicando = {};
+  state.docUploadTarget = null;
   state.tab = 'home';
   state.stacks = { home:[{screen:'home'}], leads:[{screen:'leadsList'}], contas:[{screen:'contasList'}], empreendimentos:[{screen:'empList'}], reservas:[{screen:'resList'}] };
   state.filters = { leadsQuery:'', contasQuery:'', empQuery:'', unitFilter:'disponivel', comissaoFilter:'todas', torreAtivaPorEmp:{} };
@@ -1544,6 +1710,7 @@ function screenLeadDetail(id){
 }
 
 /* ---------- CONTA (cliente) ---------- */
+const UF_BRASIL = ['AC','AL','AP','AM','BA','CE','DF','ES','GO','MA','MT','MS','MG','PA','PB','PR','PE','PI','RJ','RN','RS','RO','RR','SC','SP','SE','TO'];
 function screenClienteForm(params){
   const lead = params.leadId ? leadById(params.leadId) : null;
   const body = `
@@ -1564,7 +1731,24 @@ function screenClienteForm(params){
       <div class="field"><label for="cf-prof">Profissao</label><input id="cf-prof" placeholder="Ex: Engenheiro"></div>
     </div>
     <div class="field"><label for="cf-renda">Renda mensal (R$)</label><input id="cf-renda" type="number" placeholder="0,00"></div>
-    <div class="field"><label for="cf-endereco">Endereco completo</label><input id="cf-endereco" placeholder="Rua, numero, bairro, cidade/UF"></div>
+    <div class="field-row">
+      <div class="field" style="flex:2;"><label for="cf-logradouro">Logradouro</label><input id="cf-logradouro" placeholder="Rua, avenida..."></div>
+      <div class="field"><label for="cf-numero">Numero</label><input id="cf-numero"></div>
+    </div>
+    <div class="field-row">
+      <div class="field"><label for="cf-complemento">Complemento</label><input id="cf-complemento" placeholder="Apto, bloco..."></div>
+      <div class="field"><label for="cf-bairro">Bairro</label><input id="cf-bairro"></div>
+    </div>
+    <div class="field-row">
+      <div class="field" style="flex:2;"><label for="cf-cidade">Cidade</label><input id="cf-cidade"></div>
+      <div class="field"><label for="cf-estado">Estado</label>
+        <select id="cf-estado">
+          <option value="">-</option>
+          ${UF_BRASIL.map(uf=>`<option value="${uf}">${uf}</option>`).join('')}
+        </select>
+      </div>
+    </div>
+    <div class="field"><label for="cf-cep">CEP</label><input id="cf-cep" placeholder="00000-000"></div>
     <button class="btn btn-primary" onclick="saveCliente('${lead?lead.id:''}')">${I.check} Salvar conta</button>
   `;
   return {title:'Cadastro de conta', back:true, body};
@@ -1576,15 +1760,23 @@ function saveCliente(leadId){
   const lead = leadId ? leadById(leadId) : null;
   const telefone = document.getElementById('cf-tel').value.trim();
   const email = document.getElementById('cf-email').value.trim();
+  const rg = document.getElementById('cf-rg').value.trim();
+  const estadoCivil = document.getElementById('cf-ecivil').value;
+  const profissao = document.getElementById('cf-prof').value.trim();
+  const renda = Number(document.getElementById('cf-renda').value)||0;
+  const logradouro = document.getElementById('cf-logradouro').value.trim();
+  const numero = document.getElementById('cf-numero').value.trim();
+  const complemento = document.getElementById('cf-complemento').value.trim();
+  const bairro = document.getElementById('cf-bairro').value.trim();
+  const cidade = document.getElementById('cf-cidade').value.trim();
+  const estado = document.getElementById('cf-estado').value;
+  const cep = document.getElementById('cf-cep').value.trim();
+  const enderecoDisplay = [logradouro && numero ? `${logradouro}, ${numero}` : logradouro, complemento, bairro, cidade && estado ? `${cidade}/${estado}` : cidade].filter(Boolean).join(' - ');
+
   const id = 'c'+(++seq);
   const cliente = {
-    id, nome, cpf,
-    rg: document.getElementById('cf-rg').value.trim(),
-    telefone, email,
-    estadoCivil: document.getElementById('cf-ecivil').value,
-    profissao: document.getElementById('cf-prof').value.trim(),
-    renda: Number(document.getElementById('cf-renda').value)||0,
-    endereco: document.getElementById('cf-endereco').value.trim(),
+    id, nome, cpf, rg, telefone, email, estadoCivil, profissao, renda,
+    endereco: enderecoDisplay,
     origemLeadId: leadId || null,
     documentos: novoDocumentosChecklist(),
   };
@@ -1599,7 +1791,10 @@ function saveCliente(leadId){
   /* conversao de verdade (Database.convertLead no Apex) - cria a Account e marca o Lead como
      convertido de fato no Salesforce (IsConverted=true), nao so muda o texto do Status. */
   toast('Convertendo lead no Salesforce...');
-  sfApi(`/leads/${leadId}/converter`, {method:'POST', body:JSON.stringify({nome, cpf, telefone, email})})
+  sfApi(`/leads/${leadId}/converter`, {method:'POST', body:JSON.stringify({
+    nome, cpf, telefone, email, rg, estadoCivil, profissao, renda,
+    logradouro, numero, complemento, bairro, cidade, estado, cep,
+  })})
     .then(res=>{
       cliente.sfId = res.contaId;
       lead.status = 'Convertido';
@@ -1753,6 +1948,7 @@ function screenClienteDetail(id){
       <div class="kv-row"><span class="k">Estado civil</span><span class="v" style="font-family:inherit; font-weight:500;">${c.estadoCivil||'-'}</span></div>
       <div class="kv-row"><span class="k">Profissao</span><span class="v" style="font-family:inherit; font-weight:500;">${c.profissao||'-'}</span></div>
       <div class="kv-row"><span class="k">Renda mensal</span><span class="v">${c.renda?brl(c.renda):'-'}</span></div>
+      ${c.empreendimentoInteresseNome ? `<div class="kv-row"><span class="k">Empreendimento</span><span class="v" style="font-family:inherit; font-weight:500;">${c.empreendimentoInteresseNome}</span></div>` : ''}
     </div>
 
     ${documentosChecklist(c)}
