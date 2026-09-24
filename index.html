@@ -301,7 +301,9 @@
 
   /* lead status path - same idea as the Salesforce Path component: a chain of
      stages, done/current/todo, so lead.status here maps 1:1 to a real picklist */
-  .lead-path{display:flex; overflow-x:auto; -webkit-overflow-scrolling:touch; margin:2px 0 18px;}
+  .lead-path{display:flex; overflow-x:auto; -webkit-overflow-scrolling:touch; margin:2px 0 18px;
+    -webkit-mask-image:linear-gradient(to right, black calc(100% - 28px), transparent 100%);
+    mask-image:linear-gradient(to right, black calc(100% - 28px), transparent 100%);}
   .path-step{
     border:none; box-sizing:border-box; flex:1 0 auto; min-width:64px; text-align:center;
     padding:9px 10px 9px 18px; margin-left:-10px; font-size:10.5px; font-weight:700; font-family:inherit;
@@ -1227,6 +1229,11 @@ function render(opts={}){
   const view = document.getElementById('view');
   view.innerHTML = `<div class="screen">${body}</div>`;
   view.scrollTop = (opts.resetScroll && !activeId) ? 0 : scrollTop;
+  /* o "caminho" do lead tem 6 estagios e rola na horizontal (.lead-path{overflow-x:auto}) - sem
+     isso o estagio atual podia ficar fora da tela (ex: Qualificacao/Convertido), parecendo que
+     "nao aparece" quando na verdade só estava fora da area visivel sem nenhuma pista de scroll. */
+  const pathAtual = view.querySelector('.path-step.current');
+  if(pathAtual) pathAtual.scrollIntoView({inline:'center', block:'nearest'});
   document.getElementById('tabbar').style.display = state.mode==='wizard' ? 'none' : 'flex';
   document.querySelectorAll('.tab-btn').forEach(b=>b.classList.toggle('active', b.dataset.tab===state.tab && state.mode!=='wizard'));
 
@@ -1587,16 +1594,24 @@ function saveCliente(leadId){
     documentos: novoDocumentosChecklist(),
   };
   DB.clientes.unshift(cliente);
-  if(lead) setLeadStatus(leadId, 'Convertido');
   replaceTop('clienteDetail', {id});
   if(!lead || !lead.real){
+    if(lead) lead.status = 'Convertido';
+    render();
     toast('Conta cadastrada com sucesso');
     return;
   }
-  toast('Conta cadastrada - sincronizando com o Salesforce...');
-  sfApi('/contas', {method:'POST', body:JSON.stringify({nome, cpf, telefone, email})})
-    .then(res=>{ cliente.sfId = res.id; toast('Conta sincronizada com o Salesforce'); })
-    .catch(e=>{ toast('Conta salva localmente, mas a sincronizacao falhou: '+e.message); });
+  /* conversao de verdade (Database.convertLead no Apex) - cria a Account e marca o Lead como
+     convertido de fato no Salesforce (IsConverted=true), nao so muda o texto do Status. */
+  toast('Convertendo lead no Salesforce...');
+  sfApi(`/leads/${leadId}/converter`, {method:'POST', body:JSON.stringify({nome, cpf, telefone, email})})
+    .then(res=>{
+      cliente.sfId = res.contaId;
+      lead.status = 'Convertido';
+      render();
+      toast('Lead convertido no Salesforce');
+    })
+    .catch(e=>{ toast('Conta salva localmente, mas a conversao no Salesforce falhou: '+e.message); });
 }
 function boletoRow(b){
   const cls = b.status==='Pago' ? 'badge-available' : b.status==='Atrasado' ? 'badge-sold' : 'badge-blue';
