@@ -313,6 +313,8 @@
   .doc-camerabtn svg{width:15px; height:15px;}
   .doc-camerabtn:disabled{opacity:.5;}
   .doc-chevron{display:inline-flex; transition:transform .18s ease;}
+  .list-card-chevron{display:inline-flex; flex:0 0 auto; color:var(--text-muted);}
+  .list-card-chevron svg{width:16px; height:16px;}
   .doc-chevron.open{transform:rotate(90deg);}
 
   .field-grid{display:grid; grid-template-columns:1fr 1fr; gap:8px; margin-top:11px;}
@@ -1526,6 +1528,7 @@ const state = {
   sfEmpreendimentosLoaded:false, sfEmpreendimentosError:null, sfDetalhesCarregados:{}, sfUsuarioNome:null, sfUsuarioNomeCompleto:null,
   sfFotosCache:{}, sfVisitasCarregadas:{}, sfContasCarregadas:{}, sfGaleriaCache:{}, sfBoletosCarregados:{},
   sfDocumentosCarregados:{}, sfDocUploading:{}, sfDocProcessando:{}, sfDocAplicando:{}, sfDocExcluindo:{}, sfDocArquivoCache:{}, docUploadTarget:null,
+  sfTabelasVendasCache:{},
 };
 
 function go(screen, params={}){ state.stacks[state.tab].push({screen, params}); render({resetScroll:true}); }
@@ -1658,6 +1661,7 @@ function doLogout(){
   state.sfDocExcluindo = {};
   state.sfDocArquivoCache = {};
   state.docUploadTarget = null;
+  state.sfTabelasVendasCache = {};
   state.tab = 'home';
   state.stacks = { home:[{screen:'home'}], leads:[{screen:'leadsList'}], contas:[{screen:'contasList'}], empreendimentos:[{screen:'empList'}], reservas:[{screen:'resList'}] };
   state.filters = { leadsQuery:'', contasQuery:'', empQuery:'', unitFilter:'disponivel', comissaoFilter:'todas', torreAtivaPorEmp:{} };
@@ -2783,6 +2787,7 @@ function startWizard(unitId){
     clienteId: state.context.preselectCliente || null,
     novoClienteMode:false,
     pagamentos:[],
+    tabelaId:null, seriesEditor:null,
     obs:'',
     aceite:false,
     protocolo:null,
@@ -2868,6 +2873,177 @@ function onWizardParcelasInput(){
   if(!opcoes.includes(atual)) sel.value = 'Mensal';
 }
 function pagamentoAlocado(pagamentos){ return pagamentos.reduce((s,p)=>s+p.valor,0); }
+
+/* ---------- WIZARD passo 2 (real): Tabela de Vendas + Serie de Pagamentos ----------
+   antes esse passo era 100% texto livre (Tipo/Valor/Parcelas/Periodicidade, nunca virava
+   nada no Salesforce alem de exibicao local). Empreendimentos com Tabela de Vendas real
+   aprovada (CA_TabelaVendas__c) agora usam a composicao de verdade - mesma logica do LWC
+   real (unidadeMapaEspelho): valor da parcela = valor da unidade x percentual da serie / 100,
+   dividido pela quantidade de parcelas. Empreendimentos sem nenhuma Tabela aprovada continuam
+   no fluxo manual de sempre (fallback, sem quebrar nada). */
+async function sfCarregarTabelasVendas(empId){
+  if(state.sfTabelasVendasCache[empId] !== undefined) return;
+  state.sfTabelasVendasCache[empId] = null; // marca "buscando"
+  try{
+    const tabelas = await sfApi(`/reservas/tabelas?empreendimentoId=${empId}`);
+    state.sfTabelasVendasCache[empId] = tabelas;
+  }catch(e){
+    console.error('Nao foi possivel carregar as tabelas de vendas', e);
+    state.sfTabelasVendasCache[empId] = [];
+  }
+  render();
+}
+/* monta as linhas editaveis da serie a partir da composicao padrao da tabela - o valor de cada
+   parcela vem do PRECO REAL da unidade (nao da tabela em si, que so' presta a estrutura/%). */
+function wizardSelecionarTabela(tabelaId){
+  const w = state.wizard;
+  const tabelas = state.sfTabelasVendasCache[w.empId] || [];
+  const tabela = tabelas.find(t=>t.id===tabelaId);
+  if(!tabela) return;
+  w.tabelaId = tabelaId;
+  w.seriesEditor = tabela.series.map(s=>({
+    catalogoId: s.catalogoId, nome: s.nome, percentual: s.percentual, ordem: s.ordem||0,
+    quantidade: s.quantidade||1,
+    valor: Math.round((unitById(w.unitId).valor * (s.percentual||0) / 100 / (s.quantidade||1)) * 100) / 100,
+  }));
+  render();
+}
+function wizardTrocarTabela(){
+  state.wizard.tabelaId = null;
+  state.wizard.seriesEditor = null;
+  render();
+}
+function wizardSerieEditorInput(idx, campo, valorStr){
+  const linha = state.wizard.seriesEditor[idx];
+  if(!linha) return;
+  linha[campo] = Math.max(0, Number(valorStr)||0);
+  render();
+}
+function wizardSerieAlocado(){
+  return (state.wizard.seriesEditor||[]).reduce((s,l)=>s+(l.quantidade*l.valor),0);
+}
+/* markup do fluxo manual antigo (Tipo/Valor/Parcelas/Periodicidade em texto livre) - extraido
+   pra uma funcao pra poder ser reaproveitado tanto pelo mock quanto por um empreendimento real
+   sem nenhuma Tabela de Vendas aprovada ainda (fallback, sem quebrar nada que ja funcionava). */
+function manualSerieBody(u, w){
+  const alocado = pagamentoAlocado(w.pagamentos);
+  const saldo = u.valor - alocado;
+  const saldoColor = saldo===0 ? 'var(--status-available)' : saldo>0 ? 'var(--status-reserved)' : 'var(--status-sold)';
+  const saldoLabel = saldo===0 ? 'Serie completa' : saldo>0 ? 'Falta alocar' : 'Excede o valor em';
+  return `
+    <div class="price-hero" style="margin-top:0;">
+      <div class="label">Valor do imovel</div>
+      <div class="amount">${brl(u.valor)}</div>
+    </div>
+
+    <div class="kv-table" style="margin-bottom:16px;">
+      <div class="kv-row"><span class="k">Ja alocado</span><span class="v">${brl(alocado)}</span></div>
+      <div class="kv-row"><span class="k">${saldoLabel}</span><span class="v" style="color:${saldoColor};">${brl(Math.abs(saldo))}</span></div>
+    </div>
+
+    ${w.pagamentos.length? `
+      <div class="section-title" style="margin-top:0;">Itens da serie</div>
+      <div class="stack" style="margin-bottom:18px;">
+        ${w.pagamentos.map((p,idx)=>`
+          <div class="list-card" style="cursor:default;">
+            <div style="flex:1;">
+              <div style="font-weight:600; font-size:13.5px;">${p.tipo}</div>
+              <div class="muted" style="font-size:11.5px;">${p.parcelas>1?p.parcelas+'x ':''}${p.periodicidade}${p.quando?' - '+p.quando:''}</div>
+            </div>
+            <div class="mono" style="font-weight:600; font-size:13.5px; margin-right:8px;">${brl(p.valor)}</div>
+            <button class="list-remove" onclick="wizardRemovePagamento(${idx})" aria-label="Remover item">${I.close}</button>
+          </div>
+        `).join('')}
+      </div>
+    ` : ''}
+
+    <div class="section-title" style="margin-top:0;">Adicionar pagamento</div>
+    <div class="field-row">
+      <div class="field"><label for="wp-tipo">Tipo</label>
+        <select id="wp-tipo">${TIPOS_PAGAMENTO.map(o=>`<option>${o}</option>`).join('')}</select>
+      </div>
+      <div class="field"><label for="wp-valor">Valor (R$)</label><input id="wp-valor" type="number" placeholder="0"></div>
+    </div>
+    <div class="field-row">
+      <div class="field"><label for="wp-parcelas">Parcelas</label><input id="wp-parcelas" type="number" min="1" value="1" oninput="onWizardParcelasInput()"></div>
+      <div class="field"><label for="wp-periodicidade">Periodicidade</label>
+        <select id="wp-periodicidade">${periodicidadeOptions(1).map(o=>`<option>${o}</option>`).join('')}</select>
+      </div>
+    </div>
+    <div class="field"><label for="wp-quando">Quando (opcional)</label><input id="wp-quando" placeholder="Ex: na entrega das chaves"></div>
+    <button class="btn btn-secondary" onclick="wizardAddPagamento()">${I.plus} Adicionar a serie</button>
+
+    <div class="btn-row" style="margin-top:18px;">
+      <button class="btn btn-primary" ${saldo!==0?'disabled':''} onclick="wizardGoto(3)">Continuar</button>
+    </div>
+    ${saldo!==0? `<p class="muted" style="font-size:11.5px; text-align:center; margin-top:8px;">A serie precisa somar exatamente o valor do imovel para continuar.</p>` : ''}
+  `;
+}
+/* escolha da Tabela de Vendas real (composicao de series fixa por tabela, aprovada no
+   Salesforce) - mesmo primeiro passo que o Espelho de Vendas real (unidadeMapaEspelho) usa. */
+function tabelaPickerBody(tabelas){
+  return `
+    <div class="section-title" style="margin-top:0;">Escolha a tabela de vendas</div>
+    <div class="stack">
+      ${tabelas.map(t=>`
+        <button class="list-card" onclick="wizardSelecionarTabela('${t.id}')">
+          <div style="width:34px; height:34px; border-radius:9px; background:var(--surface-2); display:flex; align-items:center; justify-content:center; color:var(--accent); flex:0 0 auto;">${I.calendar}</div>
+          <div style="flex:1; min-width:0;">
+            <div style="font-weight:600; font-size:13.5px;">${t.name}</div>
+            <div class="muted" style="font-size:11.5px;">${fmtDataBR(t.vigenciaDe)} a ${fmtDataBR(t.vigenciaAte)} - ${t.series.length} serie${t.series.length===1?'':'s'}</div>
+          </div>
+          <span class="list-card-chevron">${I.chevron}</span>
+        </button>
+      `).join('')}
+    </div>
+  `;
+}
+/* serie de pagamentos real, editavel - valor de cada parcela ja vem calculado a partir do
+   PRECO REAL da unidade (percentual da tabela x valor / quantidade, mesma formula do LWC real),
+   o corretor so' ajusta se quiser mudar quantidade/valor de alguma serie (ex: menos parcelas,
+   entrada maior). Precisa fechar exatamente no valor da unidade pra liberar o Continuar. */
+function serieEditorBody(u, w){
+  const alocado = wizardSerieAlocado();
+  const saldo = Math.round((u.valor - alocado)*100)/100;
+  const balanceado = Math.abs(saldo) < 0.01;
+  const saldoColor = balanceado ? 'var(--status-available)' : saldo>0 ? 'var(--status-reserved)' : 'var(--status-sold)';
+  const saldoLabel = balanceado ? 'Serie completa' : saldo>0 ? 'Falta alocar' : 'Excede o valor em';
+  return `
+    <div class="price-hero" style="margin-top:0;">
+      <div class="label">Valor do imovel</div>
+      <div class="amount">${brl(u.valor)}</div>
+    </div>
+
+    <button class="btn-ghost" style="font-size:12px; padding:6px 2px; margin-bottom:4px;" onclick="wizardTrocarTabela()">&larr; Trocar tabela de vendas</button>
+
+    <div class="kv-table" style="margin-bottom:16px;">
+      <div class="kv-row"><span class="k">Ja alocado</span><span class="v">${brl(alocado)}</span></div>
+      <div class="kv-row"><span class="k">${saldoLabel}</span><span class="v" style="color:${saldoColor};">${brl(Math.abs(saldo))}</span></div>
+    </div>
+
+    <div class="section-title" style="margin-top:0;">Series</div>
+    <div class="stack" style="margin-bottom:18px;">
+      ${w.seriesEditor.map((s,idx)=>`
+        <div class="list-card" style="cursor:default; flex-direction:column; align-items:stretch;">
+          <div style="display:flex; justify-content:space-between; align-items:baseline; margin-bottom:8px;">
+            <div style="font-weight:600; font-size:13.5px;">${s.nome}</div>
+            <div class="mono muted" style="font-size:11.5px;">${s.percentual}%</div>
+          </div>
+          <div class="field-row">
+            <div class="field"><label>Parcelas</label><input type="number" min="1" value="${s.quantidade}" onchange="wizardSerieEditorInput(${idx},'quantidade',this.value)"></div>
+            <div class="field"><label>Valor da parcela (R$)</label><input type="number" min="0" step="0.01" value="${s.valor}" onchange="wizardSerieEditorInput(${idx},'valor',this.value)"></div>
+          </div>
+          <div class="muted" style="font-size:11.5px; text-align:right; margin-top:4px;">Subtotal: ${brl(s.quantidade*s.valor)}</div>
+        </div>
+      `).join('')}
+    </div>
+
+    <div class="btn-row" style="margin-top:18px;">
+      <button class="btn btn-primary" ${!balanceado?'disabled':''} onclick="wizardGoto(3)">Continuar</button>
+    </div>
+    ${!balanceado? `<p class="muted" style="font-size:11.5px; text-align:center; margin-top:8px;">A serie precisa somar exatamente o valor do imovel para continuar.</p>` : ''}
+  `;
+}
 function wizardAddPagamento(){
   const tipo = document.getElementById('wp-tipo').value;
   const valor = Number(document.getElementById('wp-valor').value)||0;
@@ -2909,10 +3085,18 @@ function confirmarReserva(){
      ja cria a Oportunidade (RecordType CA_Reserva) automaticamente quando negociacaoId vem vazio. */
   w.confirmando = true;
   render();
-  sfApi('/reservas', {method:'POST', body:JSON.stringify({
+  /* quando o corretor usou uma Tabela de Vendas real (w.tabelaId), manda a serie ajustada junto
+     - CA_RestReservas ja monta o CA_FluxoPagamento__c/SerieFluxoPagamento__c reais a partir dela.
+     Sem tabela (fluxo manual/mock), so' manda os campos de sempre. */
+  const body = {
     unidadeId: w.unitId, clienteId: w.clienteId,
     motivo: 'Outros', media: 'Site', observacoes: w.obs || '',
-  })})
+  };
+  if(w.tabelaId && w.seriesEditor && w.seriesEditor.length){
+    body.tabelaVendasId = w.tabelaId;
+    body.seriesAjustadas = w.seriesEditor.map(s=>({catalogoId:s.catalogoId, valor:s.valor, quantidade:s.quantidade, ordem:s.ordem}));
+  }
+  sfApi('/reservas', {method:'POST', body:JSON.stringify(body)})
     .then(res=>{
       const id = res.reservaId;
       DB.reservas.unshift({id, protocolo:id, clienteId:w.clienteId, unitId:w.unitId, empId:w.empId, valor, pagamentos:w.pagamentos, status:'Em analise', data:hojeBR(), real:true, temCotacao:false});
@@ -2990,61 +3174,28 @@ function renderWizard(){
       `;
     }
   } else if(w.step===2){
-    const alocado = pagamentoAlocado(w.pagamentos);
-    const saldo = u.valor - alocado;
-    const saldoColor = saldo===0 ? 'var(--status-available)' : saldo>0 ? 'var(--status-reserved)' : 'var(--status-sold)';
-    const saldoLabel = saldo===0 ? 'Serie completa' : saldo>0 ? 'Falta alocar' : 'Excede o valor em';
-    body = `
-      <div class="price-hero" style="margin-top:0;">
-        <div class="label">Valor do imovel</div>
-        <div class="amount">${brl(u.valor)}</div>
-      </div>
-
-      <div class="kv-table" style="margin-bottom:16px;">
-        <div class="kv-row"><span class="k">Ja alocado</span><span class="v">${brl(alocado)}</span></div>
-        <div class="kv-row"><span class="k">${saldoLabel}</span><span class="v" style="color:${saldoColor};">${brl(Math.abs(saldo))}</span></div>
-      </div>
-
-      ${w.pagamentos.length? `
-        <div class="section-title" style="margin-top:0;">Itens da serie</div>
-        <div class="stack" style="margin-bottom:18px;">
-          ${w.pagamentos.map((p,idx)=>`
-            <div class="list-card" style="cursor:default;">
-              <div style="flex:1;">
-                <div style="font-weight:600; font-size:13.5px;">${p.tipo}</div>
-                <div class="muted" style="font-size:11.5px;">${p.parcelas>1?p.parcelas+'x ':''}${p.periodicidade}${p.quando?' - '+p.quando:''}</div>
-              </div>
-              <div class="mono" style="font-weight:600; font-size:13.5px; margin-right:8px;">${brl(p.valor)}</div>
-              <button class="list-remove" onclick="wizardRemovePagamento(${idx})" aria-label="Remover item">${I.close}</button>
-            </div>
-          `).join('')}
-        </div>
-      ` : ''}
-
-      <div class="section-title" style="margin-top:0;">Adicionar pagamento</div>
-      <div class="field-row">
-        <div class="field"><label for="wp-tipo">Tipo</label>
-          <select id="wp-tipo">${TIPOS_PAGAMENTO.map(o=>`<option>${o}</option>`).join('')}</select>
-        </div>
-        <div class="field"><label for="wp-valor">Valor (R$)</label><input id="wp-valor" type="number" placeholder="0"></div>
-      </div>
-      <div class="field-row">
-        <div class="field"><label for="wp-parcelas">Parcelas</label><input id="wp-parcelas" type="number" min="1" value="1" oninput="onWizardParcelasInput()"></div>
-        <div class="field"><label for="wp-periodicidade">Periodicidade</label>
-          <select id="wp-periodicidade">${periodicidadeOptions(1).map(o=>`<option>${o}</option>`).join('')}</select>
-        </div>
-      </div>
-      <div class="field"><label for="wp-quando">Quando (opcional)</label><input id="wp-quando" placeholder="Ex: na entrega das chaves"></div>
-      <button class="btn btn-secondary" onclick="wizardAddPagamento()">${I.plus} Adicionar a serie</button>
-
-      <div class="btn-row" style="margin-top:18px;">
-        <button class="btn btn-primary" ${saldo!==0?'disabled':''} onclick="wizardGoto(3)">Continuar</button>
-      </div>
-      ${saldo!==0? `<p class="muted" style="font-size:11.5px; text-align:center; margin-top:8px;">A serie precisa somar exatamente o valor do imovel para continuar.</p>` : ''}
-    `;
+    /* empreendimento real com Tabela de Vendas aprovada -> fluxo real (tabela+serie de verdade,
+       gera CA_FluxoPagamento__c/SerieFluxoPagamento__c). Sem nenhuma Tabela aprovada (ou unidade
+       mock) -> fluxo manual de sempre, sem mudanca. */
+    if(u.real){
+      sfCarregarTabelasVendas(u.empId);
+      const tabelas = state.sfTabelasVendasCache[u.empId];
+      if(tabelas === null || tabelas === undefined){
+        body = `<div class="sync-row" style="margin-top:18px;"><span class="spinner"></span> Carregando tabelas de vendas...</div>`;
+      } else if(!tabelas.length){
+        body = manualSerieBody(u, w);
+      } else if(!w.tabelaId){
+        body = tabelaPickerBody(tabelas);
+      } else {
+        body = serieEditorBody(u, w);
+      }
+    } else {
+      body = manualSerieBody(u, w);
+    }
   } else if(w.step===3){
     const c = clienteById(w.clienteId);
-    const alocado = pagamentoAlocado(w.pagamentos);
+    const usaTabela = w.tabelaId && w.seriesEditor && w.seriesEditor.length;
+    const alocado = usaTabela ? wizardSerieAlocado() : pagamentoAlocado(w.pagamentos);
     const {enviados, total} = docsResumo(c);
     body = `
       <div class="section-title" style="margin-top:0;">Conta</div>
@@ -3068,7 +3219,15 @@ function renderWizard(){
 
       <div class="section-title">Serie de pagamentos</div>
       <div class="stack">
-        ${w.pagamentos.map(p=>`
+        ${usaTabela ? w.seriesEditor.map(s=>`
+          <div class="list-card" style="cursor:default;">
+            <div style="flex:1;">
+              <div style="font-weight:600; font-size:13.5px;">${s.nome}</div>
+              <div class="muted" style="font-size:11.5px;">${s.quantidade>1?s.quantidade+'x ':''}${brl(s.valor)}</div>
+            </div>
+            <div class="mono" style="font-weight:600; font-size:13.5px;">${brl(s.quantidade*s.valor)}</div>
+          </div>
+        `).join('') : w.pagamentos.map(p=>`
           <div class="list-card" style="cursor:default;">
             <div style="flex:1;">
               <div style="font-weight:600; font-size:13.5px;">${p.tipo}</div>
