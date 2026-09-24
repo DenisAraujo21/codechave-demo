@@ -733,7 +733,10 @@ function sfMapDetalheParaEmp(base, detalhe){
   const total = detalhe.totalUnidades||0, vendidas = detalhe.totalVendidas||0;
   return { ...base, torres:(detalhe.torres||[]).length, totalUnidades:total,
     vendidoPct: total ? Math.round((vendidas/total)*100) : 0, fotoUrl: detalhe.fotoUrl || base.fotoUrl,
-    fotosReais: detalhe.fotos || [] };
+    fotosReais: detalhe.fotos || [],
+    totalDisponiveis: detalhe.totalDisponiveis||0, totalReservadas: detalhe.totalReservadas||0,
+    totalVendidas: vendidas, totalBloqueadas: detalhe.totalBloqueadas||0,
+    tabelasVendas: detalhe.tabelasVendas || [] };
 }
 function sfMapEmpreendimentoInfo(e){
   return {
@@ -871,6 +874,8 @@ async function sfCarregarContaDetalhe(id){
 /* boletos reais (CA_Boleto__c) do cliente - o endpoint /boletos ja existia mas nunca tinha
    sido ligado na tela, a Conta so mostrava boletos de exemplo. */
 async function sfCarregarBoletos(clienteId){
+  if(state.sfBoletosCarregados[clienteId]) return;
+  state.sfBoletosCarregados[clienteId] = true;
   try{
     const boletos = await sfApi(`/boletos?clienteId=${clienteId}`);
     DB.boletos = DB.boletos.filter(b=>b.clienteId!==clienteId || !b.real).concat(boletos.map(b=>({
@@ -1098,13 +1103,13 @@ function plantaSvg(dorm){
 const state = {
   tab:'home', mode:'login', loginLoading:false,
   stacks:{ home:[{screen:'home'}], leads:[{screen:'leadsList'}], contas:[{screen:'contasList'}], empreendimentos:[{screen:'empList'}], reservas:[{screen:'resList'}] },
-  filters:{ leadsQuery:'', contasQuery:'', empQuery:'', unitFilter:'disponivel', comissaoFilter:'todas' },
+  filters:{ leadsQuery:'', contasQuery:'', empQuery:'', unitFilter:'disponivel', comissaoFilter:'todas', torreAtivaPorEmp:{} },
   context:{ preselectCliente:null },
   wizard:null,
   galeria:{},
   visitaDraft:null,
   sfEmpreendimentosLoaded:false, sfEmpreendimentosError:null, sfDetalhesCarregados:{}, sfUsuarioNome:null,
-  sfFotosCache:{}, sfVisitasCarregadas:{}, sfContasCarregadas:{}, sfGaleriaCache:{},
+  sfFotosCache:{}, sfVisitasCarregadas:{}, sfContasCarregadas:{}, sfGaleriaCache:{}, sfBoletosCarregados:{},
 };
 
 function go(screen, params={}){ state.stacks[state.tab].push({screen, params}); render({resetScroll:true}); }
@@ -1229,9 +1234,10 @@ function doLogout(){
   state.sfDetalhesCarregados = {};
   state.sfVisitasCarregadas = {};
   state.sfContasCarregadas = {};
+  state.sfBoletosCarregados = {};
   state.tab = 'home';
   state.stacks = { home:[{screen:'home'}], leads:[{screen:'leadsList'}], contas:[{screen:'contasList'}], empreendimentos:[{screen:'empList'}], reservas:[{screen:'resList'}] };
-  state.filters = { leadsQuery:'', contasQuery:'', empQuery:'', unitFilter:'disponivel', comissaoFilter:'todas' };
+  state.filters = { leadsQuery:'', contasQuery:'', empQuery:'', unitFilter:'disponivel', comissaoFilter:'todas', torreAtivaPorEmp:{} };
   state.context = { preselectCliente:null };
   state.wizard = null;
   state.galeria = {};
@@ -1394,15 +1400,23 @@ function saveLead(editId){
     DB.leads.unshift(novoLead);
     resetTabTo('leadsList');
     toast('Lead salvo - sincronizando com o Salesforce...');
-    sfApi('/leads', {method:'POST', body:JSON.stringify({nome:data.nome, telefone:data.telefone, email:data.email, origem:data.origem})})
-      .then(res=>{ novoLead.sfId = res.id; toast('Lead sincronizado com o Salesforce'); })
+    sfApi('/leads', {method:'POST', body:JSON.stringify({nome:data.nome, telefone:data.telefone, email:data.email, origem:data.origem, empreendimentoId:data.interesse||null})})
+      .then(res=>{
+        /* troca o id local pelo id real - sem isso, mudar o caminho ou agendar visita nesse
+         lead nunca sincroniza com o Salesforce (fica preso no fluxo mock pra sempre). */
+        novoLead.id = res.id; novoLead.real = true;
+        toast('Lead sincronizado com o Salesforce');
+      })
       .catch(e=>{ toast('Lead salvo localmente, mas a sincronizacao falhou: '+e.message); });
   }
 }
 /* estagios reais do Path Assistant do Lead no Salesforce (SDO_Sales_Lead_Path / Business Process
    "Sales Lead") - tem que ser exatamente esses 6, na mesma ordem, senao o "caminho" do app diverge
    do que o time ve dentro do Salesforce. */
-const LEAD_STAGES = ['Desqualificado','Novo','Em Atendimento','Contato Realizado','Qualificação','Convertido'];
+/* ordem confirmada pelo Denis olhando o Path ao vivo no Salesforce (a ordem que veio nos
+   metadados do PathAssistant/BusinessProcess estava desatualizada - retrieve fresco voltou sem
+   pathAssistantSteps, entao a ordem real e a que aparece na tela, nao a do metadado). */
+const LEAD_STAGES = ['Desqualificado','Novo','Contato Realizado','Em Atendimento','Qualificação','Convertido'];
 function leadStatusPath(l){
   const converted = DB.clientes.some(c=>c.origemLeadId===l.id);
   const effective = converted ? 'Convertido' : l.status;
@@ -1879,12 +1893,43 @@ function amenityGrid(e){
     </div>
   `;
 }
+/* Estoque Comercial (pills D/R/G/B) + Tabelas de Vendas (chips) - mesma informacao que o
+   control-hub do unidadeMapaEspelho real mostra no topo do Espelho de Vendas; ja vinha na
+   resposta de getDetalhesUnidades, so nao estava sendo mapeada/renderizada no app ainda. */
+function empControlHub(e){
+  if(e.totalUnidades==null) return '';
+  return `
+    <div class="control-hub" style="display:flex; flex-direction:column; gap:10px; margin:14px 0;">
+      <div class="estoque-pills" style="display:flex; gap:8px; flex-wrap:wrap;">
+        <span class="badge badge-available">${e.totalDisponiveis||0} Disponivel${(e.totalDisponiveis||0)===1?'':'s'}</span>
+        <span class="badge badge-reserved">${e.totalReservadas||0} Reservada${(e.totalReservadas||0)===1?'':'s'}</span>
+        <span class="badge badge-sold">${e.totalVendidas||0} Vendida${(e.totalVendidas||0)===1?'':'s'}</span>
+        ${e.totalBloqueadas? `<span class="badge" style="background:color-mix(in srgb, #6b7280 12%, transparent); color:#6b7280;">${e.totalBloqueadas} Bloqueada${e.totalBloqueadas===1?'':'s'}</span>` : ''}
+      </div>
+      ${(e.tabelasVendas&&e.tabelasVendas.length) ? `
+        <div class="chip-row" style="margin:0;">
+          ${e.tabelasVendas.map(t=>`<span class="chip" style="cursor:default;">${t.name}</span>`).join('')}
+        </div>
+      ` : ''}
+    </div>
+  `;
+}
+function torreSelector(empId, torres, ativa){
+  if(torres.length<2) return '';
+  return `
+    <div class="chip-row" style="margin-bottom:10px;">
+      ${torres.map(t=>`<button class="chip ${t===ativa?'active':''}" onclick="state.filters.torreAtivaPorEmp['${empId}']='${t}'; render()">Torre ${t}</button>`).join('')}
+    </div>
+  `;
+}
 function screenEmpDetail(id){
   const e = empById(id);
   const filter = state.filters.unitFilter;
   const carregado = !!state.sfDetalhesCarregados[id];
   if(!carregado) sfCarregarDetalheEmpreendimento(id);
   const torres = [...new Set(DB.units.filter(u=>u.empId===id).map(u=>u.torre))].sort();
+  const torreAtiva = state.filters.torreAtivaPorEmp[id] && torres.includes(state.filters.torreAtivaPorEmp[id])
+    ? state.filters.torreAtivaPorEmp[id] : torres[0];
   const unidadesSection = !carregado
     ? `<div class="sync-row" style="margin-top:18px;"><span class="spinner"></span> Carregando unidades...</div>`
     : `<div class="chip-row">
@@ -1893,7 +1938,8 @@ function screenEmpDetail(id){
         <button class="chip ${filter==='vendida'?'active':''}" onclick="state.filters.unitFilter='vendida'; render()">Vendidas</button>
         <button class="chip ${filter==='todas'?'active':''}" onclick="state.filters.unitFilter='todas'; render()">Todas</button>
       </div>
-      ${torres.map(t=>torreSection(id, t, filter)).join('')}`;
+      ${torreSelector(id, torres, torreAtiva)}
+      ${torreAtiva!=null ? torreSection(id, torreAtiva, filter) : emptyState('Nenhuma unidade cadastrada ainda', I.building)}`;
   const body = `
     ${empGallery(e)}
     <div style="display:flex; justify-content:space-between; align-items:flex-start; gap:8px;">
@@ -1907,6 +1953,7 @@ function screenEmpDetail(id){
       <div class="stat-tile"><div class="n mono">${e.totalUnidades}</div><div class="l">Unidades</div></div>
       <div class="stat-tile"><div class="n mono">${e.vendidoPct}%</div><div class="l">Vendido</div></div>
     </div>
+    ${empControlHub(e)}
 
     ${amenityGrid(e)}
 
@@ -2067,9 +2114,40 @@ function screenResDetail(id){
         </div>`).join('')}
     </div>
 
-    <button class="btn btn-secondary" style="margin-top:6px;" onclick="toast('Disponivel na versao conectada ao Salesforce')">Abrir no Salesforce</button>
+    ${r.real ? `
+      ${r.temCotacao ? `
+        <div class="sync-row" style="color:var(--status-available); margin-top:6px;">${I.check} Cotacao criada no Salesforce</div>
+      ` : `
+        <button class="btn btn-primary" style="margin-top:6px;" ${r.criandoCotacao?'disabled':''} onclick="criarCotacaoDaReserva('${r.id}')">
+          ${r.criandoCotacao? '<span class="spinner"></span> Criando Cotacao...' : 'Criar Cotacao'}
+        </button>
+      `}
+      <a class="btn btn-secondary" style="margin-top:8px; display:block; text-align:center;" href="${(sfSessionGet()||{}).instanceUrl}/lightning/r/CA_Reserva__c/${r.id}/view" target="_blank" rel="noopener">Abrir no Salesforce</a>
+    ` : `
+      <button class="btn btn-secondary" style="margin-top:6px;" onclick="toast('Disponivel na versao conectada ao Salesforce')">Abrir no Salesforce</button>
+    `}
   `;
   return {title: r.status==='Assinada' ? 'Contrato' : 'Reserva', back:true, body};
+}
+/* cria a Cotacao real (CA_RestReservas PATCH -> ReservasService.criarCotacaoEDesconto) a partir
+   de uma reserva feita pelo app - mesmo passo 2 que o Simulador de Vendas real faz automatico
+   quando a reserva e feita de dentro do Salesforce. */
+function criarCotacaoDaReserva(id){
+  const r = reservaById(id);
+  r.criandoCotacao = true;
+  render();
+  sfApi(`/reservas/${id}`, {method:'PATCH', body:'{}'})
+    .then(()=>{
+      r.criandoCotacao = false;
+      r.temCotacao = true;
+      render();
+      toast('Cotacao criada e sincronizada com a Oportunidade');
+    })
+    .catch(e=>{
+      r.criandoCotacao = false;
+      render();
+      toast('Nao foi possivel criar a Cotacao: '+e.message);
+    });
 }
 
 function emptyState(msg, iconSvg){
@@ -2307,7 +2385,7 @@ function confirmarReserva(){
   })})
     .then(res=>{
       const id = res.reservaId;
-      DB.reservas.unshift({id, protocolo:id, clienteId:w.clienteId, unitId:w.unitId, empId:w.empId, valor, pagamentos:w.pagamentos, status:'Em analise', data:hojeBR()});
+      DB.reservas.unshift({id, protocolo:id, clienteId:w.clienteId, unitId:w.unitId, empId:w.empId, valor, pagamentos:w.pagamentos, status:'Em analise', data:hojeBR(), real:true, temCotacao:false});
       u.status = 'reservada';
       w.confirmando = false; w.step = 4; w.protocolo = id; w.createdId = id; w.syncing = false; w.negociacaoId = res.negociacaoId;
       render({resetScroll:true});
