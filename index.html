@@ -1229,11 +1229,6 @@ function render(opts={}){
   const view = document.getElementById('view');
   view.innerHTML = `<div class="screen">${body}</div>`;
   view.scrollTop = (opts.resetScroll && !activeId) ? 0 : scrollTop;
-  /* o "caminho" do lead tem 6 estagios e rola na horizontal (.lead-path{overflow-x:auto}) - sem
-     isso o estagio atual podia ficar fora da tela (ex: Qualificacao/Convertido), parecendo que
-     "nao aparece" quando na verdade só estava fora da area visivel sem nenhuma pista de scroll. */
-  const pathAtual = view.querySelector('.path-step.current');
-  if(pathAtual) pathAtual.scrollIntoView({inline:'center', block:'nearest'});
   document.getElementById('tabbar').style.display = state.mode==='wizard' ? 'none' : 'flex';
   document.querySelectorAll('.tab-btn').forEach(b=>b.classList.toggle('active', b.dataset.tab===state.tab && state.mode!=='wizard'));
 
