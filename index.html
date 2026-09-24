@@ -141,6 +141,7 @@
   .stack{display:flex; flex-direction:column; gap:10px;}
 
   .avatar{width:42px; height:42px; border-radius:50%; background:var(--surface-2); display:flex; align-items:center; justify-content:center; font-weight:700; font-family:'Poppins',sans-serif; color:var(--accent); flex:0 0 auto; font-size:14px;}
+  .avatar-hero{width:48px; height:48px; background:var(--chrome-bg-2); color:var(--chrome-accent); font-size:15px; border:1.5px solid var(--chrome-border);}
 
   .live-dot{width:7px; height:7px; border-radius:50%; background:var(--status-available); flex:0 0 auto; animation:livepulse 1.8s ease-in-out infinite;}
   @keyframes livepulse{0%,100%{opacity:1;} 50%{opacity:.35;}}
@@ -773,6 +774,7 @@ async function sfCarregarUsuario(){
   try{
     const info = await sfApi('/me');
     state.sfUsuarioNome = info.primeiroNome || (info.nome || '').split(' ')[0] || null;
+    state.sfUsuarioNomeCompleto = info.nome || state.sfUsuarioNome;
   }catch(e){
     console.error('Nao foi possivel carregar o usuario logado', e);
   }
@@ -1152,7 +1154,8 @@ async function sfCarregarReservas(){
       data: r.criadoEm ? new Date(r.criadoEm).toLocaleDateString('pt-BR') : '',
       valor: r.valor||0, pagamentos:[],
       clienteNomeInline: r.clienteNome, unidadeNomeInline: r.unidadeNome, empreendimentoNomeInline: r.empreendimentoNome,
-      temCotacao: !!r.temCotacao, real: true,
+      temCotacao: !!r.temCotacao, documentacaoEmAnalise: !!r.documentacaoEmAnalise,
+      aprovadoIncorporadora: !!r.aprovadoIncorporadora, contratoAssinado: !!r.contratoAssinado, real: true,
     }));
   }catch(e){
     console.error('Nao foi possivel carregar as reservas', e);
@@ -1520,7 +1523,7 @@ const state = {
   wizard:null,
   galeria:{},
   visitaDraft:null,
-  sfEmpreendimentosLoaded:false, sfEmpreendimentosError:null, sfDetalhesCarregados:{}, sfUsuarioNome:null,
+  sfEmpreendimentosLoaded:false, sfEmpreendimentosError:null, sfDetalhesCarregados:{}, sfUsuarioNome:null, sfUsuarioNomeCompleto:null,
   sfFotosCache:{}, sfVisitasCarregadas:{}, sfContasCarregadas:{}, sfGaleriaCache:{}, sfBoletosCarregados:{},
   sfDocumentosCarregados:{}, sfDocUploading:{}, sfDocProcessando:{}, sfDocAplicando:{}, sfDocExcluindo:{}, sfDocArquivoCache:{}, docUploadTarget:null,
 };
@@ -1675,10 +1678,13 @@ function screenHome(){
   const roletaLeads = DB.leads.filter(l=>l.roleta && l.status==='Novo').sort((a,b)=>(a.chegouMin||0)-(b.chegouMin||0));
   const visitas = visitasUpcoming();
   const body = `
-    <div class="hero-panel">
-      <div class="eyebrow" style="color:var(--chrome-text-muted);">Bom te ver</div>
-      <h2 style="margin:3px 0 0; font-size:22px; color:var(--chrome-text);">Ola, ${state.sfUsuarioNome || 'Corretor(a)'}</h2>
-      <div style="color:var(--chrome-text-muted); font-size:12.5px; margin-top:3px;">Terca-feira, 16 de setembro</div>
+    <div class="hero-panel" style="display:flex; align-items:center; justify-content:space-between; gap:14px;">
+      <div style="min-width:0;">
+        <div class="eyebrow" style="color:var(--chrome-text-muted);">Bom te ver</div>
+        <h2 style="margin:3px 0 0; font-size:22px; color:var(--chrome-text);">Ola, ${state.sfUsuarioNome || 'Corretor(a)'}</h2>
+        <div style="color:var(--chrome-text-muted); font-size:12.5px; margin-top:3px;">Terca-feira, 16 de setembro</div>
+      </div>
+      <div class="avatar avatar-hero">${initials(state.sfUsuarioNomeCompleto || state.sfUsuarioNome || 'Corretor')}</div>
     </div>
 
     <div class="section-title" style="display:flex; align-items:center; justify-content:space-between; gap:8px;">
@@ -2567,7 +2573,17 @@ function resCard(r){
 function screenResDetail(id){
   const r = reservaById(id);
   const nome = resNomeCliente(r), unidadeNome = resNomeUnidade(r), empNome = resNomeEmpreendimento(r);
-  const steps = [
+  /* andamento real (conta reais): "Documentacao em analise" = Cotacao criada (SyncedQuoteId),
+     "Aprovacao da incorporadora" = Oportunidade chegou em "Confeccao de contrato" ou depois
+     (mesma progressao de estagios que ReservasService.ESTAGIOS_QUE_EXIGEM_RESERVA_ATIVA ja usa -
+     inclui passar pelo estagio real "Aguardando Aprovacoes"), "Contrato assinado" = estagio
+     "Contrato assinado" em diante. Mock continua com o status binario antigo (Ativa/Assinada). */
+  const steps = r.real ? [
+    {label:'Reserva criada', done:true, when:r.data},
+    {label:'Documentacao em analise', done:r.documentacaoEmAnalise, when: r.documentacaoEmAnalise ? 'concluido' : 'pendente'},
+    {label:'Aprovacao da incorporadora', done:r.aprovadoIncorporadora, when: r.aprovadoIncorporadora ? 'concluido' : 'pendente'},
+    {label:'Contrato assinado', done:r.contratoAssinado, when: r.contratoAssinado ? 'concluido' : 'pendente'},
+  ] : [
     {label:'Reserva criada', done:true, when:r.data},
     {label:'Documentacao em analise', done:true, when: r.status==='Em analise' ? 'em andamento' : r.data},
     {label:'Aprovacao da incorporadora', done:r.status==='Assinada', when: r.status==='Assinada' ? r.data : 'pendente'},
@@ -2834,12 +2850,30 @@ function wizardSetObs(v){ state.wizard.obs = v; }
 
 const TIPOS_PAGAMENTO = ['Ato','Entrada','Parcelas mensais (obra)','Reforco / balao','Pre-chaves','Pos-chaves (financiamento)','Outro'];
 const PERIODICIDADES = ['Unica','Mensal','Bimestral','Trimestral','Semestral','Anual'];
+/* "Unica" so' faz sentido com 1 parcela (2+ parcelas com periodicidade "Unica" nao tem
+   significado - pedido do Denis). A partir de 2 parcelas, a lista cai pras periodicidades
+   de verdade (Mensal em diante). */
+function periodicidadeOptions(parcelas){
+  return parcelas<=1 ? PERIODICIDADES : PERIODICIDADES.filter(o=>o!=='Unica');
+}
+/* dispara a cada digitacao no campo Parcelas - so' reconstroi o <select> de Periodicidade
+   (sem render() completo, que perderia o foco/estado do resto do formulario) */
+function onWizardParcelasInput(){
+  const parcelas = Math.max(1, Number(document.getElementById('wp-parcelas').value)||1);
+  const sel = document.getElementById('wp-periodicidade');
+  if(!sel) return;
+  const atual = sel.value;
+  const opcoes = periodicidadeOptions(parcelas);
+  sel.innerHTML = opcoes.map(o=>`<option ${o===atual?'selected':''}>${o}</option>`).join('');
+  if(!opcoes.includes(atual)) sel.value = 'Mensal';
+}
 function pagamentoAlocado(pagamentos){ return pagamentos.reduce((s,p)=>s+p.valor,0); }
 function wizardAddPagamento(){
   const tipo = document.getElementById('wp-tipo').value;
   const valor = Number(document.getElementById('wp-valor').value)||0;
   const parcelas = Math.max(1, Number(document.getElementById('wp-parcelas').value)||1);
-  const periodicidade = document.getElementById('wp-periodicidade').value;
+  let periodicidade = document.getElementById('wp-periodicidade').value;
+  if(parcelas>1 && periodicidade==='Unica') periodicidade = 'Mensal'; // rede de seguranca - o <select> ja evita isso, mas nao custa garantir aqui tambem
   const quando = document.getElementById('wp-quando').value.trim();
   if(valor<=0){ toast('Informe um valor maior que zero'); return; }
   state.wizard.pagamentos.push({tipo, valor, parcelas, periodicidade, quando});
@@ -2995,9 +3029,9 @@ function renderWizard(){
         <div class="field"><label for="wp-valor">Valor (R$)</label><input id="wp-valor" type="number" placeholder="0"></div>
       </div>
       <div class="field-row">
-        <div class="field"><label for="wp-parcelas">Parcelas</label><input id="wp-parcelas" type="number" min="1" value="1"></div>
+        <div class="field"><label for="wp-parcelas">Parcelas</label><input id="wp-parcelas" type="number" min="1" value="1" oninput="onWizardParcelasInput()"></div>
         <div class="field"><label for="wp-periodicidade">Periodicidade</label>
-          <select id="wp-periodicidade">${PERIODICIDADES.map(o=>`<option>${o}</option>`).join('')}</select>
+          <select id="wp-periodicidade">${periodicidadeOptions(1).map(o=>`<option>${o}</option>`).join('')}</select>
         </div>
       </div>
       <div class="field"><label for="wp-quando">Quando (opcional)</label><input id="wp-quando" placeholder="Ex: na entrega das chaves"></div>
