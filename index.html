@@ -140,7 +140,11 @@
   .list-card:hover{border-color:color-mix(in srgb, var(--accent) 40%, var(--border));}
   .stack{display:flex; flex-direction:column; gap:10px;}
 
-  .avatar{width:42px; height:42px; border-radius:50%; background:var(--surface-2); display:flex; align-items:center; justify-content:center; font-weight:700; font-family:'Poppins',sans-serif; color:var(--accent); flex:0 0 auto; font-size:14px;}
+  .avatar{width:42px; height:42px; border-radius:50%; background:var(--surface-2); display:flex; align-items:center; justify-content:center; font-weight:700; font-family:'Poppins',sans-serif; color:var(--accent); flex:0 0 auto; font-size:14px; overflow:hidden;}
+  .avatar img{width:100%; height:100%; object-fit:cover; display:block;}
+  .avatar-editable{position:relative; cursor:pointer; border:none; padding:0; background:none;}
+  .avatar-edit-badge{position:absolute; right:-2px; bottom:-2px; width:20px; height:20px; border-radius:50%; background:var(--chrome-accent); color:var(--chrome-bg); display:flex; align-items:center; justify-content:center; border:2px solid var(--chrome-bg-2);}
+  .avatar-edit-badge svg{width:11px; height:11px;}
   .avatar-hero{width:48px; height:48px; background:var(--chrome-bg-2); color:var(--chrome-accent); font-size:15px; border:1.5px solid var(--chrome-border);}
 
   .live-dot{width:7px; height:7px; border-radius:50%; background:var(--status-available); flex:0 0 auto; animation:livepulse 1.8s ease-in-out infinite;}
@@ -434,6 +438,7 @@
         <h1 id="headerTitle">Início</h1>
         <div class="header-action" id="headerAction"></div>
       </header>
+      <input type="file" id="avatarFileInput" accept="image/*" hidden onchange="onAvatarFileChosen(event)">
       <main id="view"></main>
       <nav class="tabbar" id="tabbar">
         <button class="tab-btn" data-tab="home" onclick="switchTab('home')">
@@ -964,11 +969,20 @@ async function sfCarregarContaDetalhe(id){
       renda: d.renda || 0, empreendimentoReservaNome: d.empreendimentoNome || null,
       empreendimentoInteresseNome: d.empreendimentoInteresseNome || null,
       endereco: [d.endereco&&d.endereco.logradouro, d.endereco&&d.endereco.numero, d.endereco&&d.endereco.bairro, d.endereco&&d.endereco.cidade, d.endereco&&d.endereco.estado].filter(Boolean).join(', '),
+      naturalidade: d.naturalidade || null, dataNascimento: d.dataNascimento || null,
+      nomeMae: d.nomeMae || null, nomePai: d.nomePai || null,
+      dataExpedicaoRG: d.dataExpedicaoRG || null, orgaoEmissor: d.orgaoEmissor || null,
+      genero: d.genero || null, documento: d.documento || null, pessoaEstrangeira: d.pessoaEstrangeira || null,
+      conjugeId: d.conjugeId || null, conjugeNome: d.conjugeNome || null,
       reservasReais: (d.reservas||[]).map(r=>({
         id: r.id, status: r.status, valor: r.valor,
         unidadeNome: r.unidadeNome || '-', empreendimentoNome: r.empreendimentoNome || '-',
       })),
     });
+    /* guarda a resposta crua (nao "achatada" pra exibicao) pra tela de edicao preencher cada
+       campo do endereco separado (tipoLogradouro/numero/etc), que a versao de exibicao acima
+       (c.endereco) junta tudo numa string so. */
+    state.sfContasRaw[id] = d;
   }catch(e){
     toast('Nao foi possivel carregar a conta: '+e.message);
   }
@@ -1517,6 +1531,45 @@ function plantaSvg(dorm){
 }
 
 /* ---------- estado / navegacao ---------- */
+/* foto do avatar (bolinha do cabecalho) - fica so no aparelho (localStorage), nunca no
+   Salesforce: nao existe como escrever/ler a foto de perfil real do usuario via API (o dominio
+   profilephoto/*.file.force.com so aceita cookie de sessao de navegador, nunca Bearer token -
+   testado exaustivamente numa fase anterior). Denis pediu pra colocar a foto dele como padrao
+   do demo e poder trocar a qualquer momento - ver avatarPickerOpen/onAvatarFileChosen. */
+const DEFAULT_AVATAR_FOTO = 'data:image/jpeg;base64,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';
+function avatarFotoCarregada(){
+  try{ return localStorage.getItem('codechave_avatar_foto') || DEFAULT_AVATAR_FOTO; }
+  catch(e){ return DEFAULT_AVATAR_FOTO; }
+}
+function avatarPickerOpen(){ document.getElementById('avatarFileInput').click(); }
+/* redimensiona/corta a foto escolhida num quadrado 240x240 (canvas) antes de guardar - fotos de
+   celular vem em varias resolucoes/proporcoes, e sem isso o avatar circular ficaria distorcido
+   e o localStorage cresceria demais com fotos de varios MB. */
+function onAvatarFileChosen(event){
+  const file = event.target.files && event.target.files[0];
+  event.target.value = '';
+  if(!file) return;
+  const reader = new FileReader();
+  reader.onload = () => {
+    const img = new Image();
+    img.onload = () => {
+      const size = 240;
+      const side = Math.min(img.width, img.height);
+      const sx = (img.width - side) / 2, sy = (img.height - side) / 2;
+      const canvas = document.createElement('canvas');
+      canvas.width = size; canvas.height = size;
+      const ctx = canvas.getContext('2d');
+      ctx.drawImage(img, sx, sy, side, side, 0, 0, size, size);
+      const dataUrl = canvas.toDataURL('image/jpeg', 0.85);
+      try{ localStorage.setItem('codechave_avatar_foto', dataUrl); }catch(e){}
+      state.avatarFoto = dataUrl;
+      render();
+    };
+    img.src = reader.result;
+  };
+  reader.readAsDataURL(file);
+}
+
 const state = {
   tab:'home', mode:'login', loginLoading:false,
   stacks:{ home:[{screen:'home'}], leads:[{screen:'leadsList'}], contas:[{screen:'contasList'}], empreendimentos:[{screen:'empList'}], reservas:[{screen:'resList'}] },
@@ -1525,8 +1578,10 @@ const state = {
   wizard:null,
   galeria:{},
   visitaDraft:null,
+  avatarFoto: avatarFotoCarregada(),
+  contaEdit:null,
   sfEmpreendimentosLoaded:false, sfEmpreendimentosError:null, sfDetalhesCarregados:{}, sfUsuarioNome:null, sfUsuarioNomeCompleto:null,
-  sfFotosCache:{}, sfVisitasCarregadas:{}, sfContasCarregadas:{}, sfGaleriaCache:{}, sfBoletosCarregados:{},
+  sfFotosCache:{}, sfVisitasCarregadas:{}, sfContasCarregadas:{}, sfContasRaw:{}, sfGaleriaCache:{}, sfBoletosCarregados:{},
   sfDocumentosCarregados:{}, sfDocUploading:{}, sfDocProcessando:{}, sfDocAplicando:{}, sfDocExcluindo:{}, sfDocArquivoCache:{}, docUploadTarget:null,
   sfTabelasVendasCache:{},
 };
@@ -1564,6 +1619,7 @@ function currentScreen(){
     case 'leadDetail': return screenLeadDetail(top.params.id);
     case 'clienteForm': return screenClienteForm(top.params);
     case 'clienteDetail': return screenClienteDetail(top.params.id);
+    case 'contaEditar': return screenContaEditar(top.params.id);
     case 'contasList': return screenContasList();
     case 'empList': return screenEmpList();
     case 'empDetail': return screenEmpDetail(top.params.id);
@@ -1653,6 +1709,7 @@ function doLogout(){
   state.sfDetalhesCarregados = {};
   state.sfVisitasCarregadas = {};
   state.sfContasCarregadas = {};
+  state.sfContasRaw = {};
   state.sfBoletosCarregados = {};
   state.sfDocumentosCarregados = {};
   state.sfDocUploading = {};
@@ -1669,6 +1726,7 @@ function doLogout(){
   state.wizard = null;
   state.galeria = {};
   state.visitaDraft = null;
+  state.contaEdit = null;
   state.mode = 'login';
   state.loginLoading = false;
   render({resetScroll:true});
@@ -1688,7 +1746,10 @@ function screenHome(){
         <h2 style="margin:3px 0 0; font-size:22px; color:var(--chrome-text);">Ola, ${state.sfUsuarioNome || 'Corretor(a)'}</h2>
         <div style="color:var(--chrome-text-muted); font-size:12.5px; margin-top:3px;">Terca-feira, 16 de setembro</div>
       </div>
-      <div class="avatar avatar-hero">${initials(state.sfUsuarioNomeCompleto || state.sfUsuarioNome || 'Corretor')}</div>
+      <button class="avatar avatar-hero avatar-editable" onclick="avatarPickerOpen()" aria-label="Alterar foto de perfil">
+        ${state.avatarFoto ? `<img src="${state.avatarFoto}" alt="Foto de perfil">` : initials(state.sfUsuarioNomeCompleto || state.sfUsuarioNome || 'Corretor')}
+        <span class="avatar-edit-badge">${I.camera}</span>
+      </button>
     </div>
 
     <div class="section-title" style="display:flex; align-items:center; justify-content:space-between; gap:8px;">
@@ -2167,6 +2228,11 @@ function screenClienteDetail(id){
       <div class="kv-row"><span class="k">Estado civil</span><span class="v" style="font-family:inherit; font-weight:500;">${c.estadoCivil||'-'}</span></div>
       <div class="kv-row"><span class="k">Profissao</span><span class="v" style="font-family:inherit; font-weight:500;">${c.profissao||'-'}</span></div>
       <div class="kv-row"><span class="k">Renda mensal</span><span class="v">${c.renda?brl(c.renda):'-'}</span></div>
+      ${c.naturalidade ? `<div class="kv-row"><span class="k">Naturalidade</span><span class="v" style="font-family:inherit; font-weight:500;">${c.naturalidade}</span></div>` : ''}
+      ${c.dataNascimento ? `<div class="kv-row"><span class="k">Data de nascimento</span><span class="v">${fmtDataBR(c.dataNascimento)}</span></div>` : ''}
+      ${c.nomeMae ? `<div class="kv-row"><span class="k">Nome da mae</span><span class="v" style="font-family:inherit; font-weight:500;">${c.nomeMae}</span></div>` : ''}
+      ${c.nomePai ? `<div class="kv-row"><span class="k">Nome do pai</span><span class="v" style="font-family:inherit; font-weight:500;">${c.nomePai}</span></div>` : ''}
+      ${(c.estadoCivil||'').startsWith('Casado') && c.conjugeNome ? `<div class="kv-row"><span class="k">Conjuge</span><span class="v" style="font-family:inherit; font-weight:500;">${c.conjugeNome}</span></div>` : ''}
       ${c.empreendimentoInteresseNome ? `<div class="kv-row"><span class="k">Empreendimento de interesse</span><span class="v" style="font-family:inherit; font-weight:500;">${c.empreendimentoInteresseNome}</span></div>` : ''}
       ${c.empreendimentoReservaNome ? `<div class="kv-row"><span class="k">Empreendimento reservado</span><span class="v" style="font-family:inherit; font-weight:500;">${c.empreendimentoReservaNome}</span></div>` : ''}
     </div>
@@ -2243,7 +2309,320 @@ function screenClienteDetail(id){
       <button class="btn btn-primary" onclick="switchTab('empreendimentos'); state.context.preselectCliente='${c.id}'; toast('Selecione a unidade para iniciar a proposta de ${c.nome.split(' ')[0]}')">Iniciar proposta</button>
     </div>
   `;
-  return {title:'Conta', back:true, body};
+  const action = `<button class="iconbtn" onclick="go('contaEditar',{id:'${c.id}'})" aria-label="Editar conta">${I.edit}</button>`;
+  return {title:'Conta', back:true, action, body};
+}
+
+/* ---------- EDITAR CONTA (todos os campos reais que existem no Account - mae/pai/naturalidade/
+   endereco/estado civil/conjuge) ---------- */
+const ESTADO_CIVIL_BASE = ['Solteiro(a)','Casado(a)','União Estável','Divorciado(a)','Viúvo(a)','Separado(a)','Outros'];
+/* os 3 regimes de bens ja existem como valores completos separados no picklist real
+   (CA_EstadoCivil__c) - "Tipo de uniao" so escolhe entre eles quando a base e "Casado(a)", pra
+   nao obrigar o corretor a digitar o texto inteiro do regime numa lista so. */
+const TIPO_UNIAO_OPCOES = [
+  {valor:'parcial', label:'Comunhão parcial de bens', estadoCivil:'Casado(a) em regime de comunhão parcial de bens'},
+  {valor:'total', label:'Comunhão total de bens', estadoCivil:'Casado(a) em regime de comunhão total de bens'},
+  {valor:'separacao', label:'Separação total de bens', estadoCivil:'Casado(a) em regime de separação total de bens'},
+];
+const GENERO_OPCOES = ['Feminino','Masculino','Desejo não informar'];
+const PESSOA_ESTRANGEIRA_OPCOES = ['Não','Sim'];
+const TIPO_LOGRADOURO_OPCOES = ['Rua','Avenida','Estrada','Chácara','Condomínio','Fazenda','Loteamento','Lagoa','Sitio','Retorno','Residencial'];
+function estadoCivilBaseDoValor(estadoCivil){
+  if(!estadoCivil || estadoCivil==='-') return '';
+  if(estadoCivil.startsWith('Casado')) return 'Casado(a)';
+  return ESTADO_CIVIL_BASE.includes(estadoCivil) ? estadoCivil : 'Outros';
+}
+function tipoUniaoDoEstadoCivil(estadoCivil){
+  const opt = TIPO_UNIAO_OPCOES.find(o=>o.estadoCivil===estadoCivil);
+  return opt ? opt.valor : '';
+}
+function estadoCivilFinal(base, tipoUniao){
+  if(base !== 'Casado(a)') return base;
+  const opt = TIPO_UNIAO_OPCOES.find(o=>o.valor===tipoUniao);
+  return opt ? opt.estadoCivil : 'Casado(a)';
+}
+/* le os campos de texto/select da tela na hora, direto do DOM pro state.contaEdit - chamado
+   antes de qualquer render() disparado de dentro do formulario (trocar estado civil, buscar
+   conjuge...), senao o render() reconstroi o HTML a partir do state antigo e apaga o que o
+   corretor ja tinha digitado nos outros campos (mesmo bug de perda de foco/digitacao ja visto
+   no wizard de parcelas - ver onWizardParcelasInput). */
+const CONTA_EDIT_TEXT_FIELDS = ['rg','telefone','email','profissao','renda','naturalidade','dataNascimento','nomeMae','nomePai','dataExpedicaoRG','orgaoEmissor','documento','tipoLogradouro','logradouro','numero','complemento','bairro','cidade','estado','cep','genero','pessoaEstrangeira'];
+function captureContaEditForm(){
+  const ce = state.contaEdit;
+  if(!ce) return;
+  CONTA_EDIT_TEXT_FIELDS.forEach(key=>{
+    const el = document.getElementById('ce-'+key.toLowerCase());
+    if(el) ce[key] = el.value;
+  });
+  const busca = document.getElementById('ce-conjugebusca'); if(busca) ce.conjugeBusca = busca.value;
+  const novoNome = document.getElementById('ce-conjugenovonome'); if(novoNome) ce.conjugeNovoNome = novoNome.value;
+  const novoCpf = document.getElementById('ce-conjugenovocpf'); if(novoCpf) ce.conjugeNovoCpf = novoCpf.value;
+}
+function onContaEditEstadoCivilChange(){
+  captureContaEditForm();
+  state.contaEdit.estadoCivilBase = document.getElementById('ce-estadocivil').value;
+  if(state.contaEdit.estadoCivilBase !== 'Casado(a)'){
+    state.contaEdit.tipoUniao = '';
+    state.contaEdit.conjugeId = null;
+    state.contaEdit.conjugeNome = null;
+    state.contaEdit.conjugeNovoMode = false;
+  }
+  render();
+}
+function onContaEditTipoUniaoChange(){
+  captureContaEditForm();
+  state.contaEdit.tipoUniao = document.getElementById('ce-tipouniao').value;
+  render();
+}
+function contaEditBuscarConjuge(){
+  captureContaEditForm();
+  const termo = (state.contaEdit.conjugeBusca||'').trim();
+  if(termo.length<2){ toast('Digite ao menos 2 letras'); return; }
+  sfApi(`/contas?busca=${encodeURIComponent(termo)}`)
+    .then(res=>{ state.contaEdit.conjugeBuscaResultados = res.filter(r=>r.id!==state.contaEdit.id); render(); })
+    .catch(e=>toast('Busca falhou: '+e.message));
+}
+function contaEditSelecionarConjuge(cid){
+  const r = (state.contaEdit.conjugeBuscaResultados||[]).find(x=>x.id===cid);
+  if(!r) return;
+  captureContaEditForm();
+  state.contaEdit.conjugeId = r.id;
+  state.contaEdit.conjugeNome = r.nome;
+  state.contaEdit.conjugeNovoMode = false;
+  render();
+}
+function contaEditTrocarConjuge(){
+  captureContaEditForm();
+  state.contaEdit.conjugeId = null;
+  state.contaEdit.conjugeNome = null;
+  render();
+}
+function contaEditMostrarNovoConjuge(){
+  captureContaEditForm();
+  state.contaEdit.conjugeNovoMode = true;
+  render();
+}
+function screenContaEditar(id){
+  const c = clienteById(id);
+  if(c.real) sfCarregarContaDetalhe(id);
+  const raw = state.sfContasRaw[id] || null;
+  if(!state.contaEdit || state.contaEdit.id !== id || (raw && !state.contaEdit.seeded)){
+    const endereco = (raw && raw.endereco) || {};
+    const estadoCivilAtual = (raw && raw.estadoCivil) || (c.estadoCivil!=='-' ? c.estadoCivil : '');
+    state.contaEdit = {
+      id, seeded: !!raw || !c.real,
+      rg: (raw && raw.rg) || (c.rg && c.rg!=='-' ? c.rg : '') || '',
+      telefone: (raw && raw.telefone) || c.telefone || '',
+      email: (raw && raw.email) || c.email || '',
+      profissao: (raw && raw.profissao) || (c.profissao && c.profissao!=='-' ? c.profissao : '') || '',
+      renda: (raw && raw.renda) || c.renda || '',
+      naturalidade: (raw && raw.naturalidade) || c.naturalidade || '',
+      dataNascimento: (raw && raw.dataNascimento) || c.dataNascimento || '',
+      nomeMae: (raw && raw.nomeMae) || c.nomeMae || '',
+      nomePai: (raw && raw.nomePai) || c.nomePai || '',
+      dataExpedicaoRG: (raw && raw.dataExpedicaoRG) || c.dataExpedicaoRG || '',
+      orgaoEmissor: (raw && raw.orgaoEmissor) || '',
+      genero: (raw && raw.genero) || '',
+      documento: (raw && raw.documento) || '',
+      pessoaEstrangeira: (raw && raw.pessoaEstrangeira) || 'Não',
+      tipoLogradouro: endereco.tipoLogradouro || '',
+      logradouro: endereco.logradouro || '',
+      numero: endereco.numero || '',
+      complemento: endereco.complemento || '',
+      bairro: endereco.bairro || '',
+      cidade: endereco.cidade || '',
+      estado: endereco.estado || '',
+      cep: endereco.cep || '',
+      estadoCivilBase: estadoCivilBaseDoValor(estadoCivilAtual),
+      tipoUniao: tipoUniaoDoEstadoCivil(estadoCivilAtual),
+      conjugeId: (raw && raw.conjugeId) || c.conjugeId || null,
+      conjugeNome: (raw && raw.conjugeNome) || c.conjugeNome || null,
+      conjugeBusca: '', conjugeBuscaResultados: [], conjugeNovoMode: false,
+      conjugeNovoNome: '', conjugeNovoCpf: '',
+      saving: false,
+    };
+  }
+  const ce = state.contaEdit;
+  const casado = ce.estadoCivilBase === 'Casado(a)';
+
+  const conjugeBody = !c.real ? `
+    <div class="field"><label for="ce-conjugenome-mock">Nome do conjuge</label><input id="ce-conjugenome-mock" value="${ce.conjugeNome||''}" oninput="state.contaEdit.conjugeNome=this.value"></div>
+  ` : ce.conjugeId ? `
+    <div class="radio-card sel" style="cursor:default;">
+      <div style="flex:1; min-width:0;">
+        <div style="font-weight:600; font-size:13.5px;">${ce.conjugeNome||'(sem nome)'}</div>
+        <div class="muted" style="font-size:11.5px;">Conjuge vinculado</div>
+      </div>
+      <button class="btn-ghost" style="width:auto; padding:6px 10px; font-size:12.5px;" onclick="contaEditTrocarConjuge()">Trocar</button>
+    </div>
+  ` : ce.conjugeNovoMode ? `
+    <div class="field"><label for="ce-conjugenovonome">Nome completo do conjuge</label><input id="ce-conjugenovonome" value="${ce.conjugeNovoNome||''}"></div>
+    <div class="field"><label for="ce-conjugenovocpf">CPF do conjuge</label><input id="ce-conjugenovocpf" value="${ce.conjugeNovoCpf||''}" placeholder="000.000.000-00"></div>
+  ` : `
+    <div class="search-wrap" style="margin-bottom:10px;">${I.search}<input id="ce-conjugebusca" value="${ce.conjugeBusca||''}" placeholder="Buscar conjuge por nome ou CPF" onkeydown="if(event.key==='Enter'){event.preventDefault(); contaEditBuscarConjuge();}"></div>
+    <button class="btn-ghost" style="margin-bottom:8px;" onclick="contaEditBuscarConjuge()">${I.search} Buscar no Salesforce</button>
+    ${(ce.conjugeBuscaResultados||[]).length ? `
+      <div class="stack" style="margin-bottom:8px;">
+        ${ce.conjugeBuscaResultados.map(r=>`
+          <div class="radio-card" onclick="contaEditSelecionarConjuge('${r.id}')">
+            <div class="radio-dot"></div>
+            <div style="flex:1; min-width:0;">
+              <div style="font-weight:600; font-size:13.5px;">${r.nome}</div>
+              <div class="muted mono" style="font-size:11.5px;">${r.cpf||'-'}</div>
+            </div>
+          </div>`).join('')}
+      </div>
+    ` : ''}
+    <button class="btn-ghost" onclick="contaEditMostrarNovoConjuge()">${I.plus} Cadastrar novo conjuge</button>
+  `;
+
+  const body = `
+    <div style="display:flex; align-items:center; gap:14px; margin-bottom:18px;">
+      <div class="avatar" style="width:44px; height:44px; font-size:15px;">${initials(c.nome)}</div>
+      <div>
+        <div style="font-weight:700; font-size:15.5px;">${c.nome}</div>
+        <span class="muted mono" style="font-size:12px;">${c.cpf}</span>
+      </div>
+    </div>
+
+    <div class="section-title" style="margin-top:0;">Documento e nascimento</div>
+    <div class="field-row">
+      <div class="field"><label for="ce-rg">RG</label><input id="ce-rg" value="${ce.rg}" placeholder="00.000.000-0"></div>
+      <div class="field"><label for="ce-orgaoemissor">Orgao emissor</label><input id="ce-orgaoemissor" value="${ce.orgaoEmissor}" placeholder="Ex: SSP/SP"></div>
+    </div>
+    <div class="field-row">
+      <div class="field"><label for="ce-dataexpedicaorg">Data de expedicao do RG</label><input id="ce-dataexpedicaorg" type="date" value="${ce.dataExpedicaoRG}"></div>
+      <div class="field"><label for="ce-datanascimento">Data de nascimento</label><input id="ce-datanascimento" type="date" value="${ce.dataNascimento}"></div>
+    </div>
+    <div class="field-row">
+      <div class="field"><label for="ce-naturalidade">Naturalidade</label><input id="ce-naturalidade" value="${ce.naturalidade}" placeholder="Cidade/UF"></div>
+      <div class="field"><label for="ce-genero">Genero</label>
+        <select id="ce-genero"><option value="">-</option>${GENERO_OPCOES.map(o=>`<option ${ce.genero===o?'selected':''}>${o}</option>`).join('')}</select>
+      </div>
+    </div>
+    <div class="field-row">
+      <div class="field"><label for="ce-pessoaestrangeira">Pessoa estrangeira</label>
+        <select id="ce-pessoaestrangeira">${PESSOA_ESTRANGEIRA_OPCOES.map(o=>`<option ${ce.pessoaEstrangeira===o?'selected':''}>${o}</option>`).join('')}</select>
+      </div>
+      <div class="field"><label for="ce-documento">Outro documento</label><input id="ce-documento" value="${ce.documento}" placeholder="Ex: CNH, passaporte"></div>
+    </div>
+
+    <div class="section-title">Filiacao</div>
+    <div class="field-row">
+      <div class="field"><label for="ce-nomemae">Nome da mae</label><input id="ce-nomemae" value="${ce.nomeMae}"></div>
+      <div class="field"><label for="ce-nomepai">Nome do pai</label><input id="ce-nomepai" value="${ce.nomePai}"></div>
+    </div>
+
+    <div class="section-title">Contato e perfil</div>
+    <div class="field-row">
+      <div class="field"><label for="ce-telefone">Telefone</label><input id="ce-telefone" value="${ce.telefone}"></div>
+      <div class="field"><label for="ce-email">E-mail</label><input id="ce-email" type="email" value="${ce.email}"></div>
+    </div>
+    <div class="field-row">
+      <div class="field"><label for="ce-profissao">Profissao</label><input id="ce-profissao" value="${ce.profissao}"></div>
+      <div class="field"><label for="ce-renda">Renda mensal (R$)</label><input id="ce-renda" type="number" value="${ce.renda}"></div>
+    </div>
+
+    <div class="section-title">Estado civil</div>
+    <div class="field"><label for="ce-estadocivil">Estado civil</label>
+      <select id="ce-estadocivil" onchange="onContaEditEstadoCivilChange()">
+        <option value="">-</option>
+        ${ESTADO_CIVIL_BASE.map(o=>`<option ${ce.estadoCivilBase===o?'selected':''}>${o}</option>`).join('')}
+      </select>
+    </div>
+    ${casado ? `
+      <div class="field"><label for="ce-tipouniao">Tipo de uniao (regime de bens)</label>
+        <select id="ce-tipouniao" onchange="onContaEditTipoUniaoChange()">
+          <option value="">Nao especificado</option>
+          ${TIPO_UNIAO_OPCOES.map(o=>`<option value="${o.valor}" ${ce.tipoUniao===o.valor?'selected':''}>${o.label}</option>`).join('')}
+        </select>
+      </div>
+      <div class="section-title" style="margin-top:10px;">Conjuge</div>
+      ${conjugeBody}
+    ` : ''}
+
+    <div class="section-title">Endereco</div>
+    <div class="field-row">
+      <div class="field"><label for="ce-tipologradouro">Tipo de logradouro</label>
+        <select id="ce-tipologradouro"><option value="">-</option>${TIPO_LOGRADOURO_OPCOES.map(o=>`<option ${ce.tipoLogradouro===o?'selected':''}>${o}</option>`).join('')}</select>
+      </div>
+      <div class="field"><label for="ce-cep">CEP</label><input id="ce-cep" value="${ce.cep}" placeholder="00000-000"></div>
+    </div>
+    <div class="field-row">
+      <div class="field" style="flex:2;"><label for="ce-logradouro">Logradouro</label><input id="ce-logradouro" value="${ce.logradouro}" placeholder="Nome da rua/avenida"></div>
+      <div class="field"><label for="ce-numero">Numero</label><input id="ce-numero" value="${ce.numero}"></div>
+    </div>
+    <div class="field-row">
+      <div class="field"><label for="ce-complemento">Complemento</label><input id="ce-complemento" value="${ce.complemento}" placeholder="Apto, bloco..."></div>
+      <div class="field"><label for="ce-bairro">Bairro</label><input id="ce-bairro" value="${ce.bairro}"></div>
+    </div>
+    <div class="field-row">
+      <div class="field" style="flex:2;"><label for="ce-cidade">Cidade</label><input id="ce-cidade" value="${ce.cidade}"></div>
+      <div class="field"><label for="ce-estado">Estado</label>
+        <select id="ce-estado"><option value="">-</option>${UF_BRASIL.map(uf=>`<option value="${uf}" ${ce.estado===uf?'selected':''}>${uf}</option>`).join('')}</select>
+      </div>
+    </div>
+
+    <button class="btn btn-primary" style="margin-top:8px;" ${ce.saving?'disabled':''} onclick="salvarContaEditar()">${ce.saving?'Salvando...':`${I.check} Salvar conta`}</button>
+  `;
+  return {title:'Editar conta', back:true, body};
+}
+function salvarContaEditar(){
+  captureContaEditForm();
+  const ce = state.contaEdit;
+  const c = clienteById(ce.id);
+  const estadoCivilFinalValor = estadoCivilFinal(ce.estadoCivilBase, ce.tipoUniao);
+  const enderecoDisplay = [ce.logradouro && ce.numero ? `${ce.logradouro}, ${ce.numero}` : ce.logradouro, ce.complemento, ce.bairro, ce.cidade && ce.estado ? `${ce.cidade}/${ce.estado}` : ce.cidade].filter(Boolean).join(' - ');
+
+  if(!c.real){
+    Object.assign(c, {
+      rg: ce.rg||'-', telefone: ce.telefone, email: ce.email, profissao: ce.profissao||'-',
+      renda: Number(ce.renda)||0, estadoCivil: estadoCivilFinalValor||'-',
+      naturalidade: ce.naturalidade, dataNascimento: ce.dataNascimento, nomeMae: ce.nomeMae, nomePai: ce.nomePai,
+      dataExpedicaoRG: ce.dataExpedicaoRG, orgaoEmissor: ce.orgaoEmissor, genero: ce.genero,
+      documento: ce.documento, pessoaEstrangeira: ce.pessoaEstrangeira,
+      conjugeNome: ce.estadoCivilBase==='Casado(a)' ? ce.conjugeNome : null,
+      endereco: enderecoDisplay,
+    });
+    state.contaEdit = null;
+    replaceTop('clienteDetail', {id: ce.id});
+    toast('Conta atualizada');
+    return;
+  }
+
+  const payload = {
+    rg: ce.rg, telefone: ce.telefone, email: ce.email, estadoCivil: estadoCivilFinalValor,
+    profissao: ce.profissao, renda: Number(ce.renda)||null,
+    naturalidade: ce.naturalidade, dataNascimento: ce.dataNascimento||null,
+    nomeMae: ce.nomeMae, nomePai: ce.nomePai, dataExpedicaoRG: ce.dataExpedicaoRG||null,
+    orgaoEmissor: ce.orgaoEmissor, genero: ce.genero, documento: ce.documento,
+    pessoaEstrangeira: ce.pessoaEstrangeira, tipoLogradouro: ce.tipoLogradouro,
+    logradouro: ce.logradouro, numero: ce.numero, complemento: ce.complemento, bairro: ce.bairro,
+    cidade: ce.cidade, estado: ce.estado, cep: ce.cep,
+  };
+  if(ce.estadoCivilBase==='Casado(a)'){
+    if(ce.conjugeId) payload.conjugeId = ce.conjugeId;
+    else if(ce.conjugeNovoNome) { payload.conjugeNovoNome = ce.conjugeNovoNome; payload.conjugeNovoCpf = ce.conjugeNovoCpf; }
+  }
+
+  ce.saving = true; render();
+  sfApi(`/contas/${ce.id}`, {method:'PATCH', body:JSON.stringify(payload)})
+    .then(d=>{
+      Object.assign(c, {
+        rg: d.rg||'-', telefone: d.telefone||'', email: d.email||'', estadoCivil: d.estadoCivil||'-',
+        profissao: d.profissao||'-', renda: d.renda||0,
+        naturalidade: d.naturalidade||null, dataNascimento: d.dataNascimento||null,
+        nomeMae: d.nomeMae||null, nomePai: d.nomePai||null, dataExpedicaoRG: d.dataExpedicaoRG||null,
+        orgaoEmissor: d.orgaoEmissor||null, genero: d.genero||null, documento: d.documento||null,
+        pessoaEstrangeira: d.pessoaEstrangeira||null, conjugeId: d.conjugeId||null, conjugeNome: d.conjugeNome||null,
+        endereco: [d.endereco&&d.endereco.logradouro, d.endereco&&d.endereco.numero, d.endereco&&d.endereco.bairro, d.endereco&&d.endereco.cidade, d.endereco&&d.endereco.estado].filter(Boolean).join(', '),
+      });
+      state.sfContasRaw[ce.id] = d;
+      state.contaEdit = null;
+      replaceTop('clienteDetail', {id: ce.id});
+      toast('Conta atualizada no Salesforce');
+    })
+    .catch(e=>{ ce.saving=false; render(); toast('Nao foi possivel salvar: '+e.message); });
 }
 function screenContasList(){
   const q = state.filters.contasQuery.toLowerCase();
