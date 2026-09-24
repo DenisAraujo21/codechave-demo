@@ -499,8 +499,8 @@ const DB = {
     {id:'l1', nome:'Camila Duarte', telefone:'(41) 99811-2234', email:'camila.duarte@gmail.com', origem:'Instagram Ads', interesse:'e4', status:'Novo', criado:'16/09', roleta:true, chegouMin:4},
     {id:'l4', nome:'Diego Almeida', telefone:'(41) 99654-8823', email:'diego.almeida@gmail.com', origem:'Google Ads', interesse:'e6', status:'Novo', criado:'16/09', roleta:true, chegouMin:19},
     {id:'l5', nome:'Juliana Prado', telefone:'(41) 99122-7734', email:'juliana.prado@gmail.com', origem:'Site', interesse:'e5', status:'Novo', criado:'16/09', roleta:true, chegouMin:41},
-    {id:'l2', nome:'Rodrigo Feres', telefone:'(41) 98722-1190', email:'rodrigo.feres@outlook.com', origem:'Indicacao', interesse:'e5', status:'Em contato', criado:'15/09'},
-    {id:'l3', nome:'Patricia Yamamoto', telefone:'(48) 99101-5567', email:'p.yamamoto@gmail.com', origem:'Stand de vendas', interesse:'e6', status:'Qualificado', criado:'13/09'},
+    {id:'l2', nome:'Rodrigo Feres', telefone:'(41) 98722-1190', email:'rodrigo.feres@outlook.com', origem:'Indicacao', interesse:'e5', status:'Contato Realizado', criado:'15/09'},
+    {id:'l3', nome:'Patricia Yamamoto', telefone:'(48) 99101-5567', email:'p.yamamoto@gmail.com', origem:'Stand de vendas', interesse:'e6', status:'Qualificação', criado:'13/09'},
   ],
   clientes:[
     /* documentos: fica no cadastro da Conta (nao por reserva) - Denis confirmou esse formato,
@@ -544,10 +544,10 @@ const DB = {
     {id:'a7', clienteId:'c2', data:'10/09/2026', canal:'Ligacao', resumo:'Cliente entrou em contato para confirmar o vencimento da proxima parcela.'},
   ],
   /* agenda de visitas - agendadas a partir do lead (na roleta ou ja em contato), ligadas
-     sempre a um lead; status Agendada/Realizada/Cancelada */
+     sempre a um lead; status real do CA_Visita__c: Agendado/Visitado/Reagendado/Cancelado */
   visitas:[
-    {id:'v1', leadId:'l2', data:'2026-09-18', hora:'10:00', local:'Decorado - Torre Verona', obs:'Cliente quer ver a unidade de 4 suites no decorado.', status:'Agendada'},
-    {id:'v2', leadId:'l3', data:'2026-09-19', hora:'15:30', local:'Stand de vendas - Acervo Apartments', obs:'', status:'Agendada'},
+    {id:'v1', leadId:'l2', data:'2026-09-18', hora:'10:00', local:'Decorado - Torre Verona', obs:'Cliente quer ver a unidade de 4 suites no decorado.', status:'Agendado'},
+    {id:'v2', leadId:'l3', data:'2026-09-19', hora:'15:30', local:'Stand de vendas - Acervo Apartments', obs:'', status:'Agendado'},
   ],
   /* comissoes do corretor - valores e percentuais ilustrativos (a politica real de comissionamento
      da Codeart/incorporadoras ainda precisa ser confirmada com o Denis antes de um demo pro cliente).
@@ -617,6 +617,9 @@ const MOCK_EMPS = DB.emps.slice();
    ids (l1..l5) - sfCarregarLeads substitui DB.leads pelos reais (Denis pediu pra so aparecer
    os leads reais na lista), mas leadById continua resolvendo os antigos como fallback. */
 const MOCK_LEADS = DB.leads.slice();
+/* mesma ideia pras contas de exemplo (c1/c2): DB.clientes vira as contas reais (com reserva
+   em andamento) quando logado, mas clienteById cai nas de exemplo como fallback. */
+const MOCK_CLIENTES = DB.clientes.slice();
 
 /* ---------- INTEGRACAO SALESFORCE (CodeChave <-> Salesforce real, REST + OAuth User-Agent Flow) ---------- */
 /* Preencher clientId com o Consumer Key do Connected App depois de criado (Callback URL =
@@ -718,7 +721,7 @@ function sfMapDetalheParaUnits(empId, detalhe){
             id:u.id, empId, torre:sfNomeCurtoTorre(torre.name), andar:u.andar, apto:parseInt(u.posicao,10)||0,
             dorm:suites, suite:suites, metragem:u.areaPrivativa||0,
             vaga:parseInt(u.vagas,10)||0, valor:u.valorTotal||0,
-            status: sfEstoqueToStatus(u.estoqueComercial),
+            status: sfEstoqueToStatus(u.estoqueComercial), real:true,
           });
         });
       });
@@ -729,7 +732,8 @@ function sfMapDetalheParaUnits(empId, detalhe){
 function sfMapDetalheParaEmp(base, detalhe){
   const total = detalhe.totalUnidades||0, vendidas = detalhe.totalVendidas||0;
   return { ...base, torres:(detalhe.torres||[]).length, totalUnidades:total,
-    vendidoPct: total ? Math.round((vendidas/total)*100) : 0, fotoUrl: detalhe.fotoUrl || base.fotoUrl };
+    vendidoPct: total ? Math.round((vendidas/total)*100) : 0, fotoUrl: detalhe.fotoUrl || base.fotoUrl,
+    fotosReais: detalhe.fotos || [] };
 }
 function sfMapEmpreendimentoInfo(e){
   return {
@@ -762,6 +766,23 @@ async function sfCarregarFoto(emp){
     render();
   }catch(e){
     delete state.sfFotosCache[emp.id]; // permite tentar de novo numa proxima renderizacao
+  }
+}
+/* versao generica do sfCarregarFoto, indexada pelo Id do ContentVersion (nao pelo emp.id) -
+   usada pela galeria real (varias fotos por empreendimento), que sfCarregarFoto nao suporta
+   por ser 1:1 com o emp. */
+async function sfCarregarFotoPorId(cvId){
+  if(!cvId || state.sfGaleriaCache[cvId] !== undefined) return;
+  state.sfGaleriaCache[cvId] = null;
+  try{
+    const session = sfSessionGet();
+    const resp = await fetch(`${session.instanceUrl}${SF_CONFIG.apiPath}/foto/${cvId}`, {headers:{'Authorization':`Bearer ${session.accessToken}`}});
+    if(!resp.ok) throw new Error('foto indisponivel');
+    const blob = await resp.blob();
+    state.sfGaleriaCache[cvId] = URL.createObjectURL(blob);
+    render();
+  }catch(e){
+    delete state.sfGaleriaCache[cvId];
   }
 }
 function sfFotoBanner(emp){
@@ -799,12 +820,67 @@ async function sfCarregarLeads(){
     const leads = await sfApi('/leads');
     DB.leads = leads.map(l=>({
       id: l.id, nome: l.nome || '(sem nome)', telefone: l.telefone || '',
-      email: l.email || '', origem: l.origem || '-', interesse: null,
+      email: l.email || '', origem: l.origem || '-', interesse: l.empreendimentoId || null,
       status: l.status || 'Novo', criado: sfDataCurta(l.criadoEm),
-      roleta: true, chegouMin: sfMinutosAtras(l.criadoEm),
+      cidade: l.cidade || null, midia: l.midia || null, corretorNome: l.corretorNome || null,
+      roleta: true, chegouMin: sfMinutosAtras(l.criadoEm), real: true,
     }));
   }catch(e){
     console.error('Nao foi possivel carregar os leads', e);
+  }
+  render();
+}
+/* contas reais com reserva/negocio em andamento (pedido do Denis) - substitui DB.clientes,
+   igual ao padrao ja usado em leads/empreendimentos. */
+async function sfCarregarContas(){
+  try{
+    const contas = await sfApi('/contas');
+    DB.clientes = contas.map(c=>({
+      id: c.id, nome: c.nome || '(sem nome)', cpf: c.cpf || '-', telefone: c.telefone || '',
+      email:'', estadoCivil:'-', profissao:'-', renda:0, endereco:'', documentos: novoDocumentosChecklist(),
+      real: true,
+    }));
+  }catch(e){
+    console.error('Nao foi possivel carregar as contas', e);
+  }
+  render();
+}
+/* detalhe completo da conta (campos + reservas reais vinculadas) - busca sob demanda ao abrir
+   o detalhe, mesmo padrao do sfCarregarDetalheEmpreendimento. */
+async function sfCarregarContaDetalhe(id){
+  if(state.sfContasCarregadas[id]) return;
+  state.sfContasCarregadas[id] = true;
+  try{
+    const d = await sfApi(`/contas/${id}`);
+    let c = clienteById(id);
+    if(!c){ c = {id, real:true}; DB.clientes.push(c); }
+    Object.assign(c, {
+      nome: d.nome || c.nome, cpf: d.cpf || '-', rg: d.rg || '-', telefone: d.telefone || '',
+      email: d.email || '', estadoCivil: d.estadoCivil || '-', profissao: d.profissao || '-',
+      endereco: [d.endereco&&d.endereco.logradouro, d.endereco&&d.endereco.numero, d.endereco&&d.endereco.bairro, d.endereco&&d.endereco.cidade, d.endereco&&d.endereco.estado].filter(Boolean).join(', '),
+      reservasReais: (d.reservas||[]).map(r=>({
+        id: r.id, status: r.status, valor: r.valor,
+        unidadeNome: r.unidadeNome || '-', empreendimentoNome: r.empreendimentoNome || '-',
+      })),
+    });
+  }catch(e){
+    toast('Nao foi possivel carregar a conta: '+e.message);
+  }
+  render();
+}
+/* boletos reais (CA_Boleto__c) do cliente - o endpoint /boletos ja existia mas nunca tinha
+   sido ligado na tela, a Conta so mostrava boletos de exemplo. */
+async function sfCarregarBoletos(clienteId){
+  try{
+    const boletos = await sfApi(`/boletos?clienteId=${clienteId}`);
+    DB.boletos = DB.boletos.filter(b=>b.clienteId!==clienteId || !b.real).concat(boletos.map(b=>({
+      id: b.Id, clienteId,
+      descricao: b.CA_NumeroParcela__c ? `Parcela ${b.CA_NumeroParcela__c}` : (b.Name||'Boleto'),
+      valor: b.CA_Valor__c || 0, vencimento: fmtDataBR(b.CA_DataVencimento__c), status: b.CA_Status__c || 'Pendente',
+      real: true,
+    })));
+  }catch(e){
+    console.error('Nao foi possivel carregar os boletos', e);
   }
   render();
 }
@@ -837,7 +913,7 @@ function unitCode(u){
   return /^[0-9]+$/.test(u.torre) ? `T${u.torre}-${numero}` : `${u.torre}${numero}`;
 }
 function leadById(id){ return DB.leads.find(l=>l.id===id) || MOCK_LEADS.find(l=>l.id===id); }
-function clienteById(id){ return DB.clientes.find(c=>c.id===id); }
+function clienteById(id){ return DB.clientes.find(c=>c.id===id) || MOCK_CLIENTES.find(c=>c.id===id); }
 function reservaById(id){ return DB.reservas.find(r=>r.id===id); }
 
 /* ---------- DOCUMENTOS DO CLIENTE ---------- */
@@ -905,10 +981,32 @@ function chegouLabel(min){
    escolhe na hora) ou de dentro do proprio lead (ja vem com o lead preenchido) */
 function fmtDataBR(iso){ if(!iso) return ''; const [y,m,d] = iso.split('-'); return `${d}/${m}/${y}`; }
 function visitasUpcoming(){
-  return DB.visitas.filter(v=>v.status==='Agendada').sort((a,b)=> (a.data+a.hora).localeCompare(b.data+b.hora));
+  return DB.visitas.filter(v=>v.status==='Agendado').sort((a,b)=> (a.data+a.hora).localeCompare(b.data+b.hora));
 }
 function leadVisita(leadId){
-  return DB.visitas.find(v=>v.leadId===leadId && v.status==='Agendada');
+  return DB.visitas.find(v=>v.leadId===leadId && v.status==='Agendado');
+}
+/* visitas reais (CA_Visita__c) de um lead - busca sob demanda quando abre o detalhe do lead,
+   igual ao padrao ja usado pros detalhes de empreendimento (sfCarregarDetalheEmpreendimento). */
+async function sfCarregarVisitasLead(leadId){
+  if(state.sfVisitasCarregadas[leadId]) return;
+  state.sfVisitasCarregadas[leadId] = true;
+  try{
+    const visitas = await sfApi(`/visitas?leadId=${leadId}`);
+    DB.visitas = DB.visitas.filter(v=>v.leadId!==leadId || !v.real).concat(visitas.map(v=>{
+      const dt = v.dataHora ? new Date(v.dataHora) : null;
+      return {
+        id: v.id, leadId, status: v.status,
+        data: dt ? dt.toISOString().slice(0,10) : '',
+        hora: dt ? String(dt.getHours()).padStart(2,'0')+':'+String(dt.getMinutes()).padStart(2,'0') : '',
+        local: v.empreendimentoNome || '', obs: v.obs || '',
+        real: true,
+      };
+    }));
+  }catch(e){
+    console.error('Nao foi possivel carregar as visitas do lead', e);
+  }
+  render();
 }
 let toastTimer=null;
 function toast(msg){
@@ -1006,7 +1104,7 @@ const state = {
   galeria:{},
   visitaDraft:null,
   sfEmpreendimentosLoaded:false, sfEmpreendimentosError:null, sfDetalhesCarregados:{}, sfUsuarioNome:null,
-  sfFotosCache:{},
+  sfFotosCache:{}, sfVisitasCarregadas:{}, sfContasCarregadas:{}, sfGaleriaCache:{},
 };
 
 function go(screen, params={}){ state.stacks[state.tab].push({screen, params}); render({resetScroll:true}); }
@@ -1129,6 +1227,8 @@ function doLogout(){
   state.sfEmpreendimentosLoaded = false;
   state.sfEmpreendimentosError = null;
   state.sfDetalhesCarregados = {};
+  state.sfVisitasCarregadas = {};
+  state.sfContasCarregadas = {};
   state.tab = 'home';
   state.stacks = { home:[{screen:'home'}], leads:[{screen:'leadsList'}], contas:[{screen:'contasList'}], empreendimentos:[{screen:'empList'}], reservas:[{screen:'resList'}] };
   state.filters = { leadsQuery:'', contasQuery:'', empQuery:'', unitFilter:'disponivel', comissaoFilter:'todas' };
@@ -1208,7 +1308,7 @@ function roletaLeadCard(l){
             <span style="font-weight:600; font-size:14px;">${l.nome}</span>
             <span class="badge badge-blue">Novo</span>
           </div>
-          <div class="muted" style="font-size:12px;">${[emp&&emp.nome, l.origem].filter(Boolean).join(' - ')}</div>
+          <div class="muted" style="font-size:12px;">${[emp&&emp.nome, l.origem, l.cidade].filter(Boolean).join(' - ')}</div>
         </div>
       </button>
       <div class="roleta-bottom">
@@ -1299,7 +1399,10 @@ function saveLead(editId){
       .catch(e=>{ toast('Lead salvo localmente, mas a sincronizacao falhou: '+e.message); });
   }
 }
-const LEAD_STAGES = ['Novo','Em contato','Qualificado','Convertido'];
+/* estagios reais do Path Assistant do Lead no Salesforce (SDO_Sales_Lead_Path / Business Process
+   "Sales Lead") - tem que ser exatamente esses 6, na mesma ordem, senao o "caminho" do app diverge
+   do que o time ve dentro do Salesforce. */
+const LEAD_STAGES = ['Desqualificado','Novo','Em Atendimento','Contato Realizado','Qualificação','Convertido'];
 function leadStatusPath(l){
   const converted = DB.clientes.some(c=>c.origemLeadId===l.id);
   const effective = converted ? 'Convertido' : l.status;
@@ -1316,14 +1419,27 @@ function leadStatusPath(l){
 }
 function setLeadStatus(id, status){
   const l = leadById(id);
+  const statusAnterior = l.status;
   l.status = status;
   render();
-  toast('Status atualizado para "'+status+'"');
+  if(!l.real){
+    toast('Status atualizado para "'+status+'"');
+    return;
+  }
+  toast('Atualizando status no Salesforce...');
+  sfApi(`/leads/${id}`, {method:'PATCH', body:JSON.stringify({status})})
+    .then(()=>{ toast('Status atualizado para "'+status+'"'); })
+    .catch(e=>{
+      l.status = statusAnterior;
+      render();
+      toast('Nao foi possivel atualizar no Salesforce: '+e.message);
+    });
 }
 function screenLeadDetail(id){
   const l = leadById(id);
   const emp = empById(l.interesse);
   const converted = DB.clientes.some(c=>c.origemLeadId===id);
+  if(l.real) sfCarregarVisitasLead(id);
   const visita = leadVisita(id);
   const action = `<button class="iconbtn" onclick="go('leadForm',{editId:'${l.id}'})" aria-label="Editar">${I.edit}</button>`;
   const body = `
@@ -1353,6 +1469,9 @@ function screenLeadDetail(id){
       <div class="kv-row"><span class="k">E-mail</span><span class="v" style="font-family:inherit; font-weight:500;">${l.email||'-'}</span></div>
       <div class="kv-row"><span class="k">Origem</span><span class="v" style="font-family:inherit; font-weight:500;">${l.origem}</span></div>
       <div class="kv-row"><span class="k">Interesse</span><span class="v" style="font-family:inherit; font-weight:500;">${emp ? emp.nome : '-'}</span></div>
+      ${l.cidade ? `<div class="kv-row"><span class="k">Cidade</span><span class="v" style="font-family:inherit; font-weight:500;">${l.cidade}</span></div>` : ''}
+      ${l.midia ? `<div class="kv-row"><span class="k">Midia</span><span class="v" style="font-family:inherit; font-weight:500;">${l.midia}</span></div>` : ''}
+      ${l.corretorNome ? `<div class="kv-row"><span class="k">Corretor</span><span class="v" style="font-family:inherit; font-weight:500;">${l.corretorNome}</span></div>` : ''}
       <div class="kv-row"><span class="k">Cadastrado em</span><span class="v">${l.criado}/2026</span></div>
     </div>
     ${l.obs? `<div class="section-title">Observacoes</div><p class="muted" style="font-size:13.5px;">${l.obs}</p>` : ''}
@@ -1395,12 +1514,14 @@ function saveCliente(leadId){
   const nome = document.getElementById('cf-nome').value.trim();
   const cpf = document.getElementById('cf-cpf').value.trim();
   if(!nome || !cpf){ toast('Preencha ao menos nome e CPF'); return; }
+  const lead = leadId ? leadById(leadId) : null;
+  const telefone = document.getElementById('cf-tel').value.trim();
+  const email = document.getElementById('cf-email').value.trim();
   const id = 'c'+(++seq);
   const cliente = {
     id, nome, cpf,
     rg: document.getElementById('cf-rg').value.trim(),
-    telefone: document.getElementById('cf-tel').value.trim(),
-    email: document.getElementById('cf-email').value.trim(),
+    telefone, email,
     estadoCivil: document.getElementById('cf-ecivil').value,
     profissao: document.getElementById('cf-prof').value.trim(),
     renda: Number(document.getElementById('cf-renda').value)||0,
@@ -1409,9 +1530,16 @@ function saveCliente(leadId){
     documentos: novoDocumentosChecklist(),
   };
   DB.clientes.unshift(cliente);
-  if(leadId) leadById(leadId).status = 'Qualificado';
+  if(lead) setLeadStatus(leadId, 'Convertido');
   replaceTop('clienteDetail', {id});
-  toast('Conta cadastrada com sucesso');
+  if(!lead || !lead.real){
+    toast('Conta cadastrada com sucesso');
+    return;
+  }
+  toast('Conta cadastrada - sincronizando com o Salesforce...');
+  sfApi('/contas', {method:'POST', body:JSON.stringify({nome, cpf, telefone, email})})
+    .then(res=>{ cliente.sfId = res.id; toast('Conta sincronizada com o Salesforce'); })
+    .catch(e=>{ toast('Conta salva localmente, mas a sincronizacao falhou: '+e.message); });
 }
 function boletoRow(b){
   const cls = b.status==='Pago' ? 'badge-available' : b.status==='Atrasado' ? 'badge-sold' : 'badge-blue';
@@ -1534,6 +1662,7 @@ function atendimentoRow(a){
 }
 function screenClienteDetail(id){
   const c = clienteById(id);
+  if(c.real){ sfCarregarContaDetalhe(id); sfCarregarBoletos(id); }
   const reservasCliente = DB.reservas.filter(r=>r.clienteId===id);
   const contratos = reservasCliente.filter(r=>r.status==='Assinada');
   const emAndamento = reservasCliente.filter(r=>r.status!=='Assinada');
@@ -1580,32 +1709,47 @@ function screenClienteDetail(id){
       <div class="stack" style="margin-bottom:18px;">${boletos.map(boletoRow).join('')}</div>
     ` : emptyState('Nenhum boleto gerado ainda', I.emptyDoc)}
 
-    ${contratos.length? `
-      <div class="section-title">Contratos</div>
-      <div class="stack">${contratos.map(r=>`
-        <button class="list-card" onclick="switchTab('reservas'); go('resDetail',{id:'${r.id}'})">
-          <div style="width:34px; height:34px; border-radius:9px; background:var(--surface-2); display:flex; align-items:center; justify-content:center; color:var(--status-available); flex:0 0 auto;">${I.contract}</div>
-          <div style="flex:1; min-width:0;">
-            <div style="font-weight:600; font-size:13.5px;">${unitCode(unitById(r.unitId))} - ${empById(r.empId).nome}</div>
-            <div class="muted" style="font-size:11.5px;">${r.protocolo} - ${brl(r.valor)}</div>
-          </div>
-          <span class="badge badge-available">Ativo</span>
-        </button>`).join('')}</div>
-    `:''}
+    ${c.real ? `
+      <div class="section-title">Reservas (Salesforce)</div>
+      ${(c.reservasReais&&c.reservasReais.length)? `
+        <div class="stack">${c.reservasReais.map(r=>`
+          <div class="list-card" style="cursor:default;">
+            <div style="width:34px; height:34px; border-radius:9px; background:var(--surface-2); display:flex; align-items:center; justify-content:center; color:var(--status-available); flex:0 0 auto;">${I.contract}</div>
+            <div style="flex:1; min-width:0;">
+              <div style="font-weight:600; font-size:13.5px;">${r.unidadeNome} - ${r.empreendimentoNome}</div>
+              <div class="muted" style="font-size:11.5px;">${r.valor?brl(r.valor):''}</div>
+            </div>
+            <span class="badge ${r.status==='Ativa'?'badge-available':'badge-blue'}">${r.status}</span>
+          </div>`).join('')}</div>
+      ` : emptyState('Nenhuma reserva ainda', I.contract)}
+    ` : `
+      ${contratos.length? `
+        <div class="section-title">Contratos</div>
+        <div class="stack">${contratos.map(r=>`
+          <button class="list-card" onclick="switchTab('reservas'); go('resDetail',{id:'${r.id}'})">
+            <div style="width:34px; height:34px; border-radius:9px; background:var(--surface-2); display:flex; align-items:center; justify-content:center; color:var(--status-available); flex:0 0 auto;">${I.contract}</div>
+            <div style="flex:1; min-width:0;">
+              <div style="font-weight:600; font-size:13.5px;">${unitCode(unitById(r.unitId))} - ${empById(r.empId).nome}</div>
+              <div class="muted" style="font-size:11.5px;">${r.protocolo} - ${brl(r.valor)}</div>
+            </div>
+            <span class="badge badge-available">Ativo</span>
+          </button>`).join('')}</div>
+      `:''}
 
-    ${emAndamento.length? `
-      <div class="section-title">Reservas em andamento</div>
-      <div class="stack">${emAndamento.map(r=>`
-        <button class="list-card" onclick="switchTab('reservas'); go('resDetail',{id:'${r.id}'})">
-          <div style="flex:1; min-width:0;">
-            <div style="font-weight:600; font-size:13.5px;">${unitCode(unitById(r.unitId))} - ${empById(r.empId).nome}</div>
-            <div class="muted" style="font-size:11.5px;">${r.protocolo}</div>
-          </div>
-          <span class="badge badge-reserved">${r.status}</span>
-        </button>`).join('')}</div>
-    `:''}
+      ${emAndamento.length? `
+        <div class="section-title">Reservas em andamento</div>
+        <div class="stack">${emAndamento.map(r=>`
+          <button class="list-card" onclick="switchTab('reservas'); go('resDetail',{id:'${r.id}'})">
+            <div style="flex:1; min-width:0;">
+              <div style="font-weight:600; font-size:13.5px;">${unitCode(unitById(r.unitId))} - ${empById(r.empId).nome}</div>
+              <div class="muted" style="font-size:11.5px;">${r.protocolo}</div>
+            </div>
+            <span class="badge badge-reserved">${r.status}</span>
+          </button>`).join('')}</div>
+      `:''}
 
-    ${!reservasCliente.length ? emptyState('Nenhuma reserva ou contrato ainda', I.contract) : ''}
+      ${!reservasCliente.length ? emptyState('Nenhuma reserva ou contrato ainda', I.contract) : ''}
+    `}
 
     <div class="section-title">Historico de atendimento</div>
     ${atendimentos.length ? `
@@ -1629,7 +1773,7 @@ function screenContasList(){
   return {title:'Contas', back:false, action, body};
 }
 function contaCard(c){
-  const abertas = DB.reservas.filter(r=>r.clienteId===c.id).length;
+  const abertas = c.real ? 0 : DB.reservas.filter(r=>r.clienteId===c.id).length;
   return `
     <button class="list-card" onclick="go('clienteDetail',{id:'${c.id}'})">
       <div class="avatar">${initials(c.nome)}</div>
@@ -1637,7 +1781,7 @@ function contaCard(c){
         <div style="font-weight:600; font-size:14px;">${c.nome}</div>
         <div class="muted mono" style="font-size:11.5px;">${c.cpf}</div>
       </div>
-      ${abertas? `<span class="badge badge-blue">${abertas} reserva${abertas>1?'s':''}</span>` : ''}
+      ${c.real? `<span class="badge badge-blue">Reserva em andamento</span>` : abertas? `<span class="badge badge-blue">${abertas} reserva${abertas>1?'s':''}</span>` : ''}
     </button>`;
 }
 
@@ -1648,12 +1792,21 @@ function contaCard(c){
    foto verdadeira daquele empreendimento */
 function empGallery(e){
   const fotos = PHOTOS[e.id] || [];
-  const total = fotos.length || 2;
+  const fotosReais = e.fotosReais || [];
+  const total = fotos.length || (fotosReais.length>1 ? fotosReais.length : 2);
   const idx = state.galeria[e.id] || 0;
   let content;
   const fotoSf = idx===0 ? sfFotoBanner(e) : null;
   if(fotos.length){
     content = `<div class="slide"><img src="${fotos[idx].src}" alt="${fotos[idx].tag} - ${e.nome}" style="width:100%; height:100%; object-fit:cover; display:block;"></div><span class="slide-tag">${fotos[idx].tag}</span>`;
+  } else if(fotosReais.length>1){
+    /* galeria real (Salesforce Files) - varias fotos anexadas ao empreendimento */
+    const f = fotosReais[idx] || fotosReais[0];
+    sfCarregarFotoPorId(f.contentVersionId);
+    const src = state.sfGaleriaCache[f.contentVersionId];
+    content = src
+      ? `<div class="slide"><img src="${src}" alt="${f.titulo||''} - ${e.nome}" style="width:100%; height:100%; object-fit:cover; display:block;"></div><span class="slide-tag">${f.titulo||'Foto'}</span>`
+      : `<div class="slide-placeholder"><span class="spinner"></span></div>`;
   } else if(fotoSf){
     content = `<div class="slide">${fotoSf}</div><span class="slide-tag">Foto</span>`;
   } else {
@@ -1936,14 +2089,14 @@ function visitaSelectLead(id){ state.visitaDraft.leadId = id; render(); }
 function screenVisitaForm(){
   const draft = state.visitaDraft || (state.visitaDraft = {leadId:null});
   const lead = draft.leadId ? leadById(draft.leadId) : null;
-  const localSugerido = lead ? `Decorado - ${empById(lead.interesse).nome}` : '';
+  const localSugerido = lead ? `Decorado - ${(empById(lead.interesse)||{}).nome || 'empreendimento a definir'}` : '';
   const body = `
     ${lead ? `
       <div class="list-card" style="cursor:default; margin-bottom:18px;">
         <div class="avatar">${initials(lead.nome)}</div>
         <div style="flex:1; min-width:0;">
           <div style="font-weight:600; font-size:14px;">${lead.nome}</div>
-          <div class="muted" style="font-size:12px;">${lead.telefone} - ${empById(lead.interesse).nome}</div>
+          <div class="muted" style="font-size:12px;">${[lead.telefone, (empById(lead.interesse)||{}).nome].filter(Boolean).join(' - ')}</div>
         </div>
       </div>
     ` : `
@@ -1978,16 +2131,42 @@ function saveVisita(){
   const local = document.getElementById('vf-local').value.trim();
   const obs = document.getElementById('vf-obs').value.trim();
   const id = 'v'+(++seq);
-  DB.visitas.push({id, leadId:draft.leadId, data, hora, local, obs, status:'Agendada'});
+  const lead = leadById(draft.leadId);
+  const novaVisita = {id, leadId:draft.leadId, data, hora, local, obs, status:'Agendado'};
+  DB.visitas.push(novaVisita);
   state.visitaDraft = null;
   goBack();
-  toast('Visita agendada com sucesso');
+  if(!lead || !lead.real){
+    toast('Visita agendada com sucesso');
+    return;
+  }
+  toast('Agendando visita no Salesforce...');
+  const dataHoraIso = new Date(`${data}T${hora}:00`).toISOString();
+  sfApi('/visitas', {method:'POST', body:JSON.stringify({leadId:draft.leadId, dataHora:dataHoraIso, observacoes:obs})})
+    .then(res=>{ novaVisita.id = res.id; novaVisita.real = true; render(); toast('Visita agendada no Salesforce'); })
+    .catch(e=>{
+      DB.visitas = DB.visitas.filter(v=>v!==novaVisita);
+      render();
+      toast('Nao foi possivel agendar no Salesforce: '+e.message);
+    });
 }
 function cancelarVisita(id){
   const v = DB.visitas.find(v=>v.id===id);
-  if(v) v.status = 'Cancelada';
+  if(!v) return;
+  const statusAnterior = v.status;
+  v.status = 'Cancelado';
   render();
-  toast('Visita cancelada');
+  if(!v.real){
+    toast('Visita cancelada');
+    return;
+  }
+  sfApi(`/visitas/${id}`, {method:'PATCH', body:'{}'})
+    .then(()=>{ toast('Visita cancelada'); })
+    .catch(e=>{
+      v.status = statusAnterior;
+      render();
+      toast('Nao foi possivel cancelar no Salesforce: '+e.message);
+    });
 }
 function visitaCard(v){
   const l = leadById(v.leadId);
@@ -2031,22 +2210,50 @@ function wizardBack(){
 function wizardGoto(step){ state.wizard.step = step; render({resetScroll:true}); }
 function wizardSelectCliente(id){ state.wizard.clienteId = id; render(); }
 function wizardShowNovoCliente(){ state.wizard.novoClienteMode = true; render({resetScroll:true}); }
+/* busca contas reais no Salesforce (nao so as que ja tem reserva) - necessario pro wizard
+   porque quem esta reservando pela primeira vez ainda nao aparece em DB.clientes. */
+function wizardBuscarConta(){
+  const termo = document.getElementById('wz-busca-conta').value.trim();
+  if(termo.length<2){ toast('Digite ao menos 2 letras'); return; }
+  sfApi(`/contas?busca=${encodeURIComponent(termo)}`)
+    .then(res=>{ state.wizard.buscaResultados = res; render(); })
+    .catch(e=>toast('Busca falhou: '+e.message));
+}
+function wizardSelectContaBusca(id){
+  const c = (state.wizard.buscaResultados||[]).find(x=>x.id===id);
+  if(!c) return;
+  if(!clienteById(id)){
+    DB.clientes.unshift({ id:c.id, nome:c.nome, cpf:c.cpf||'-', telefone:c.telefone||'', email:'', estadoCivil:'-', profissao:'-', renda:0, documentos: novoDocumentosChecklist(), real:true });
+  }
+  wizardSelectCliente(id);
+}
 function wizardSaveNovoCliente(){
   const nome = document.getElementById('wc-nome').value.trim();
   const cpf = document.getElementById('wc-cpf').value.trim();
   if(!nome || !cpf){ toast('Preencha nome e CPF'); return; }
+  const telefone = document.getElementById('wc-tel').value.trim();
+  const email = document.getElementById('wc-email').value.trim();
+  const u = unitById(state.wizard.unitId);
   const id = 'c'+(++seq);
-  DB.clientes.unshift({
-    id, nome, cpf,
-    telefone: document.getElementById('wc-tel').value.trim(),
-    email: document.getElementById('wc-email').value.trim(),
-    estadoCivil:'-', profissao:'-', renda:0,
-    documentos: novoDocumentosChecklist(),
-  });
+  const cliente = { id, nome, cpf, telefone, email, estadoCivil:'-', profissao:'-', renda:0, documentos: novoDocumentosChecklist() };
+  DB.clientes.unshift(cliente);
   state.wizard.clienteId = id;
   state.wizard.novoClienteMode = false;
   render();
-  toast('Conta cadastrada');
+  if(!u.real){
+    toast('Conta cadastrada');
+    return;
+  }
+  toast('Cadastrando conta no Salesforce...');
+  sfApi('/contas', {method:'POST', body:JSON.stringify({nome, cpf, telefone, email})})
+    .then(res=>{
+      /* troca o id local pelo id real do Salesforce - a reserva precisa do Id real da Account */
+      cliente.id = res.id; cliente.real = true;
+      if(state.wizard && state.wizard.clienteId===id) state.wizard.clienteId = res.id;
+      render();
+      toast('Conta cadastrada no Salesforce');
+    })
+    .catch(e=>toast('Nao foi possivel cadastrar a conta no Salesforce: '+e.message));
 }
 function wizardToggleAceite(){ state.wizard.aceite = !state.wizard.aceite; render(); }
 function wizardSetObs(v){ state.wizard.obs = v; }
@@ -2069,17 +2276,48 @@ function wizardRemovePagamento(idx){
   render();
 }
 
+function hojeBR(){
+  const d = new Date();
+  return String(d.getDate()).padStart(2,'0')+'/'+String(d.getMonth()+1).padStart(2,'0')+'/'+d.getFullYear();
+}
 function confirmarReserva(){
   const w = state.wizard;
   const u = unitById(w.unitId);
   const valor = u.valor;
-  const id = 'r'+(++seq);
-  const protocolo = 'RES-2026-'+(10000+Number(seq)).toString().slice(-5);
-  DB.reservas.unshift({id, protocolo, clienteId:w.clienteId, unitId:w.unitId, empId:w.empId, valor, pagamentos:w.pagamentos, status:'Em analise', data:'16/09/2026'});
-  u.status = 'reservada';
-  w.step = 4; w.protocolo = protocolo; w.createdId = id; w.syncing = true;
-  render({resetScroll:true});
-  setTimeout(()=>{ if(state.wizard){ state.wizard.syncing=false; render(); } }, 1400);
+
+  if(!u.real){
+    /* fluxo mock - inalterado, unidades de exemplo nao existem no Salesforce */
+    const id = 'r'+(++seq);
+    const protocolo = 'RES-2026-'+(10000+Number(seq)).toString().slice(-5);
+    DB.reservas.unshift({id, protocolo, clienteId:w.clienteId, unitId:w.unitId, empId:w.empId, valor, pagamentos:w.pagamentos, status:'Em analise', data:'16/09/2026'});
+    u.status = 'reservada';
+    w.step = 4; w.protocolo = protocolo; w.createdId = id; w.syncing = true;
+    render({resetScroll:true});
+    setTimeout(()=>{ if(state.wizard){ state.wizard.syncing=false; render(); } }, 1400);
+    return;
+  }
+
+  /* fluxo real: so mostra a tela de sucesso depois que o Salesforce confirmar - CA_RestReservas
+     ja cria a Oportunidade (RecordType CA_Reserva) automaticamente quando negociacaoId vem vazio. */
+  w.confirmando = true;
+  render();
+  sfApi('/reservas', {method:'POST', body:JSON.stringify({
+    unidadeId: w.unitId, clienteId: w.clienteId,
+    motivo: 'Outros', media: 'Site', observacoes: w.obs || '',
+  })})
+    .then(res=>{
+      const id = res.reservaId;
+      DB.reservas.unshift({id, protocolo:id, clienteId:w.clienteId, unitId:w.unitId, empId:w.empId, valor, pagamentos:w.pagamentos, status:'Em analise', data:hojeBR()});
+      u.status = 'reservada';
+      w.confirmando = false; w.step = 4; w.protocolo = id; w.createdId = id; w.syncing = false; w.negociacaoId = res.negociacaoId;
+      render({resetScroll:true});
+      toast('Reserva e Oportunidade criadas no Salesforce');
+    })
+    .catch(e=>{
+      w.confirmando = false;
+      render();
+      toast('Nao foi possivel criar a reserva no Salesforce: '+e.message);
+    });
 }
 
 function renderWizard(){
@@ -2102,9 +2340,23 @@ function renderWizard(){
       `;
     } else {
       const clienteSel = w.clienteId ? clienteById(w.clienteId) : null;
+      const buscaResultados = (w.buscaResultados||[]).filter(bc=>!DB.clientes.some(c=>c.id===bc.id));
       body = `
         <p class="muted" style="font-size:13px; margin-top:0;">Unidade ${unitCode(u)} - ${e.nome}</p>
+        ${u.real ? `
+          <div class="search-wrap" style="margin-bottom:10px;">${I.search}<input id="wz-busca-conta" placeholder="Buscar conta por nome ou CPF" onkeydown="if(event.key==='Enter'){event.preventDefault(); wizardBuscarConta();}">
+          </div>
+          <button class="btn btn-ghost" style="margin-bottom:10px;" onclick="wizardBuscarConta()">${I.search} Buscar no Salesforce</button>
+        ` : ''}
         <div class="stack">
+          ${buscaResultados.map(c=>`
+            <div class="radio-card" onclick="wizardSelectContaBusca('${c.id}')">
+              <div class="radio-dot"></div>
+              <div style="flex:1; min-width:0;">
+                <div style="font-weight:600; font-size:13.5px;">${c.nome}</div>
+                <div class="muted mono" style="font-size:11.5px;">${c.cpf||'-'}</div>
+              </div>
+            </div>`).join('')}
           ${DB.clientes.map(c=>`
             <div class="radio-card ${w.clienteId===c.id?'sel':''}" onclick="wizardSelectCliente('${c.id}')">
               <div class="radio-dot"></div>
@@ -2229,7 +2481,7 @@ function renderWizard(){
         A conta esta ciente das condicoes apresentadas e autoriza a criacao da reserva.
       </label>
 
-      <button class="btn btn-primary" ${!w.aceite?'disabled':''} onclick="confirmarReserva()">Confirmar reserva</button>
+      <button class="btn btn-primary" ${(!w.aceite||w.confirmando)?'disabled':''} onclick="confirmarReserva()">${w.confirmando?'<span class=\"spinner\"></span> Criando no Salesforce...':'Confirmar reserva'}</button>
     `;
   } else {
     body = `
@@ -2269,6 +2521,7 @@ function finishWizard(viewDetail){
     sfCarregarEmpreendimentos();
     sfCarregarUsuario();
     sfCarregarLeads();
+    sfCarregarContas();
   } else {
     render();
   }
