@@ -620,6 +620,9 @@ const MOCK_LEADS = DB.leads.slice();
 /* mesma ideia pras contas de exemplo (c1/c2): DB.clientes vira as contas reais (com reserva
    em andamento) quando logado, mas clienteById cai nas de exemplo como fallback. */
 const MOCK_CLIENTES = DB.clientes.slice();
+/* mesma ideia pras reservas de exemplo (r1/r2, referenciadas por comissoes mock cm1..cm5) -
+   sfCarregarReservas substitui DB.reservas pelas reais (com temCotacao vindo do Salesforce). */
+const MOCK_RESERVAS = DB.reservas.slice();
 
 /* ---------- INTEGRACAO SALESFORCE (CodeChave <-> Salesforce real, REST + OAuth User-Agent Flow) ---------- */
 /* Preencher clientId com o Consumer Key do Connected App depois de criado (Callback URL =
@@ -889,6 +892,24 @@ async function sfCarregarBoletos(clienteId){
   }
   render();
 }
+/* reservas reais do corretor - substitui DB.reservas (antes so ganhava itens durante a sessao
+   que os criava, nunca mostrava o que ja existia no Salesforce, incluindo se a Cotacao ja foi
+   criada por outro caminho, ex.: pelo Simulador de Vendas dentro da Oportunidade). */
+async function sfCarregarReservas(){
+  try{
+    const reservas = await sfApi('/reservas');
+    DB.reservas = reservas.map(r=>({
+      id: r.id, protocolo: r.id, status: r.status,
+      data: r.criadoEm ? new Date(r.criadoEm).toLocaleDateString('pt-BR') : '',
+      valor: r.valor||0, pagamentos:[],
+      clienteNomeInline: r.clienteNome, unidadeNomeInline: r.unidadeNome, empreendimentoNomeInline: r.empreendimentoNome,
+      temCotacao: !!r.temCotacao, real: true,
+    }));
+  }catch(e){
+    console.error('Nao foi possivel carregar as reservas', e);
+  }
+  render();
+}
 async function sfCarregarDetalheEmpreendimento(id){
   if(state.sfDetalhesCarregados[id]) return;
   try{
@@ -919,7 +940,29 @@ function unitCode(u){
 }
 function leadById(id){ return DB.leads.find(l=>l.id===id) || MOCK_LEADS.find(l=>l.id===id); }
 function clienteById(id){ return DB.clientes.find(c=>c.id===id) || MOCK_CLIENTES.find(c=>c.id===id); }
-function reservaById(id){ return DB.reservas.find(r=>r.id===id); }
+function reservaById(id){ return DB.reservas.find(r=>r.id===id) || MOCK_RESERVAS.find(r=>r.id===id); }
+/* nome/unidade/empreendimento de uma reserva real: vem inline na propria reserva (o app nao
+   necessariamente tem a conta/empreendimento/unidade carregados em DB quando essa reserva veio
+   do boot, so quando o corretor abre a tela deles) - reservas de exemplo continuam usando os
+   lookups (unitById/empById/clienteById) como sempre. */
+function resNomeCliente(r){
+  if(r.clienteNomeInline) return r.clienteNomeInline;
+  const c = clienteById(r.clienteId);
+  return c ? c.nome : '-';
+}
+function resNomeEmpreendimento(r){
+  if(r.empreendimentoNomeInline) return r.empreendimentoNomeInline;
+  const e = empById(r.empId);
+  return e ? e.nome : '-';
+}
+function resNomeUnidade(r){
+  if(!r.unidadeNomeInline) {
+    const u = unitById(r.unitId);
+    return u ? unitCode(u) : '-';
+  }
+  const prefixo = resNomeEmpreendimento(r)+' - ';
+  return r.unidadeNomeInline.startsWith(prefixo) ? r.unidadeNomeInline.slice(prefixo.length) : r.unidadeNomeInline;
+}
 
 /* ---------- DOCUMENTOS DO CLIENTE ---------- */
 /* fica no cadastro da Conta, nao amarrado a uma reserva especifica - assim documentos ja
@@ -2058,19 +2101,20 @@ function screenResList(){
   return {title:'Reservas', back:false, body};
 }
 function resCard(r){
-  const u = unitById(r.unitId), e = empById(r.empId), c = clienteById(r.clienteId);
+  const nome = resNomeCliente(r);
   return `
     <button class="list-card" onclick="go('resDetail',{id:'${r.id}'})">
-      <div class="avatar">${initials(c.nome)}</div>
+      <div class="avatar">${initials(nome)}</div>
       <div style="flex:1; min-width:0;">
-        <div style="font-weight:600; font-size:14px;">${c.nome}</div>
-        <div class="muted" style="font-size:12px;">${e.nome} - ${unitCode(u)} - ${r.protocolo}</div>
+        <div style="font-weight:600; font-size:14px;">${nome}</div>
+        <div class="muted" style="font-size:12px;">${resNomeEmpreendimento(r)} - ${resNomeUnidade(r)}</div>
       </div>
       <span class="badge ${r.status==='Assinada'?'badge-available':'badge-reserved'}">${r.status}</span>
     </button>`;
 }
 function screenResDetail(id){
-  const r = reservaById(id), u = unitById(r.unitId), e = empById(r.empId), c = clienteById(r.clienteId);
+  const r = reservaById(id);
+  const nome = resNomeCliente(r), unidadeNome = resNomeUnidade(r), empNome = resNomeEmpreendimento(r);
   const steps = [
     {label:'Reserva criada', done:true, when:r.data},
     {label:'Documentacao em analise', done:true, when: r.status==='Em analise' ? 'em andamento' : r.data},
@@ -2083,8 +2127,8 @@ function screenResDetail(id){
         <span class="eyebrow mono">${r.protocolo}</span>
         <span class="badge ${r.status==='Assinada'?'badge-available':'badge-reserved'}">${r.status}</span>
       </div>
-      <div style="font-weight:700; font-size:15.5px;">${c.nome}</div>
-      <div class="muted" style="font-size:12.5px; margin-top:2px;">${e.nome} - Unidade ${unitCode(u)}</div>
+      <div style="font-weight:700; font-size:15.5px;">${nome}</div>
+      <div class="muted" style="font-size:12.5px; margin-top:2px;">${empNome} - Unidade ${unidadeNome}</div>
     </div>
 
     <div class="kv-table" style="margin-bottom:18px;">
@@ -2600,6 +2644,7 @@ function finishWizard(viewDetail){
     sfCarregarUsuario();
     sfCarregarLeads();
     sfCarregarContas();
+    sfCarregarReservas();
   } else {
     render();
   }
