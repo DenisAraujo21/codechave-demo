@@ -284,6 +284,7 @@
   .doc-hint{font-size:11px; color:var(--text-muted); margin-top:1px;}
   .doc-file{font-size:11.5px; color:var(--text-muted); margin-top:2px; display:flex; align-items:center; gap:5px;}
   .doc-file svg{width:11px; height:11px; flex:0 0 auto; color:var(--status-available);}
+  .doc-filelink{cursor:pointer; text-decoration:underline; text-underline-offset:2px; color:var(--accent);}
   .doc-actions{display:flex; align-items:center; gap:7px; flex:0 0 auto; margin-left:auto;}
   .doc-pill{display:inline-flex; align-items:center; gap:5px; font-size:10.5px; font-weight:700; padding:4px 8px; border-radius:999px; white-space:nowrap;}
   .doc-pill::before{content:''; width:6px; height:6px; border-radius:50%; background:currentColor;}
@@ -909,7 +910,8 @@ async function sfCarregarContaDetalhe(id){
     Object.assign(c, {
       nome: d.nome || c.nome, cpf: d.cpf || '-', rg: d.rg || '-', telefone: d.telefone || '',
       email: d.email || '', estadoCivil: d.estadoCivil || '-', profissao: d.profissao || '-',
-      renda: d.renda || 0, empreendimentoInteresseNome: d.empreendimentoNome || null,
+      renda: d.renda || 0, empreendimentoReservaNome: d.empreendimentoNome || null,
+      empreendimentoInteresseNome: d.empreendimentoInteresseNome || null,
       endereco: [d.endereco&&d.endereco.logradouro, d.endereco&&d.endereco.numero, d.endereco&&d.endereco.bairro, d.endereco&&d.endereco.cidade, d.endereco&&d.endereco.estado].filter(Boolean).join(', '),
       reservasReais: (d.reservas||[]).map(r=>({
         id: r.id, status: r.status, valor: r.valor,
@@ -1014,6 +1016,34 @@ function sfVerDadosDocumento(clienteId, tipoDocumento, contentDocumentId){
     render();
     toast('Nao foi possivel ler os dados do documento: '+e.message);
   });
+}
+/* abre o arquivo do documento (imagem ou PDF) numa aba nova - mesmo padrao blob: URL usado nas
+   fotos do empreendimento (sfCarregarFotoPorId), via CA_RestFoto/CA_RestDocumentos que ficam
+   dentro do dominio ja liberado no CORS. Abre a aba ANTES do fetch (com about:blank) e so' seta
+   o location depois - assim o navegador nao bloqueia como pop-up (a abertura precisa acontecer
+   no mesmo tick do clique do usuario, o fetch e' assincrono). */
+function verArquivoDocumento(contentDocumentId){
+  if(!contentDocumentId) return;
+  const janela = window.open('', '_blank');
+  if(state.sfDocArquivoCache[contentDocumentId]){
+    if(janela) janela.location = state.sfDocArquivoCache[contentDocumentId];
+    return;
+  }
+  sfBuscarArquivoDocumento(contentDocumentId, janela);
+}
+async function sfBuscarArquivoDocumento(contentDocumentId, janela){
+  try{
+    const session = sfSessionGet();
+    const resp = await fetch(`${session.instanceUrl}${SF_CONFIG.apiPath}/documentos/arquivo/${contentDocumentId}`, {headers:{'Authorization':`Bearer ${session.accessToken}`}});
+    if(!resp.ok) throw new Error('arquivo indisponivel');
+    const blob = await resp.blob();
+    const url = URL.createObjectURL(blob);
+    state.sfDocArquivoCache[contentDocumentId] = url;
+    if(janela) janela.location = url; else window.open(url, '_blank');
+  }catch(e){
+    if(janela) janela.close();
+    toast('Nao foi possivel abrir o arquivo: '+e.message);
+  }
 }
 /* mostrar/ocultar o painel de titularidade + campos extraidos de um documento ja enviado -
    se os campos ainda nao foram buscados nesta sessao, busca (sfVerDadosDocumento) e abre;
@@ -1253,7 +1283,7 @@ function documentoRowReal(clienteId, d){
         <div style="flex:1; min-width:0;">
           <div class="doc-name">${d.label}${d.obrigatorio?'<span class="doc-req" title="Documento obrigatorio">*</span>':''}</div>
           ${hint ? `<div class="doc-hint">${hint}</div>` : ''}
-          <div class="doc-file">${d.hasFile ? (I.check+ (d.fileName||'Documento enviado')) : 'Aguardando envio'}</div>
+          <div class="doc-file">${d.hasFile ? (I.check + `<span class="doc-filelink" onclick="verArquivoDocumento('${d.contentDocumentId}')">${d.fileName||'Documento enviado'}</span>`) : 'Aguardando envio'}</div>
         </div>
         <div class="doc-actions">
           <span class="doc-pill ${pill.cls}">${pill.txt}</span>
@@ -1445,7 +1475,7 @@ const state = {
   visitaDraft:null,
   sfEmpreendimentosLoaded:false, sfEmpreendimentosError:null, sfDetalhesCarregados:{}, sfUsuarioNome:null,
   sfFotosCache:{}, sfVisitasCarregadas:{}, sfContasCarregadas:{}, sfGaleriaCache:{}, sfBoletosCarregados:{},
-  sfDocumentosCarregados:{}, sfDocUploading:{}, sfDocProcessando:{}, sfDocAplicando:{}, sfDocExcluindo:{}, docUploadTarget:null,
+  sfDocumentosCarregados:{}, sfDocUploading:{}, sfDocProcessando:{}, sfDocAplicando:{}, sfDocExcluindo:{}, sfDocArquivoCache:{}, docUploadTarget:null,
 };
 
 function go(screen, params={}){ state.stacks[state.tab].push({screen, params}); render({resetScroll:true}); }
@@ -1576,6 +1606,7 @@ function doLogout(){
   state.sfDocProcessando = {};
   state.sfDocAplicando = {};
   state.sfDocExcluindo = {};
+  state.sfDocArquivoCache = {};
   state.docUploadTarget = null;
   state.tab = 'home';
   state.stacks = { home:[{screen:'home'}], leads:[{screen:'leadsList'}], contas:[{screen:'contasList'}], empreendimentos:[{screen:'empList'}], reservas:[{screen:'resList'}] };
@@ -2079,7 +2110,8 @@ function screenClienteDetail(id){
       <div class="kv-row"><span class="k">Estado civil</span><span class="v" style="font-family:inherit; font-weight:500;">${c.estadoCivil||'-'}</span></div>
       <div class="kv-row"><span class="k">Profissao</span><span class="v" style="font-family:inherit; font-weight:500;">${c.profissao||'-'}</span></div>
       <div class="kv-row"><span class="k">Renda mensal</span><span class="v">${c.renda?brl(c.renda):'-'}</span></div>
-      ${c.empreendimentoInteresseNome ? `<div class="kv-row"><span class="k">Empreendimento</span><span class="v" style="font-family:inherit; font-weight:500;">${c.empreendimentoInteresseNome}</span></div>` : ''}
+      ${c.empreendimentoInteresseNome ? `<div class="kv-row"><span class="k">Empreendimento de interesse</span><span class="v" style="font-family:inherit; font-weight:500;">${c.empreendimentoInteresseNome}</span></div>` : ''}
+      ${c.empreendimentoReservaNome ? `<div class="kv-row"><span class="k">Empreendimento reservado</span><span class="v" style="font-family:inherit; font-weight:500;">${c.empreendimentoReservaNome}</span></div>` : ''}
     </div>
 
     ${documentosChecklist(c)}
