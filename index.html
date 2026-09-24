@@ -237,6 +237,22 @@
   .amenity-ic svg{width:22px; height:22px;}
   .amenity-item span{font-size:10.5px; color:var(--text-muted); line-height:1.25;}
 
+  /* "Blocos" (selecao de Torre em card, com contagem D/R/G) + "Estoque Comercial" (pills que
+     tambem funcionam de filtro) - mesma organizacao do painel de controle do Espelho de Vendas
+     real (unidadeMapaEspelho), pedido do Denis. Card/pill escuro (--chrome-bg) = selecionado,
+     mesma cor que o cabecalho/tab bar do app ja usa - identidade propria, nao copia do exemplo. */
+  .bloco-row{display:flex; gap:10px; overflow-x:auto; padding:2px 2px 6px; margin:10px 0 4px; -webkit-overflow-scrolling:touch;}
+  .bloco-card{flex:0 0 auto; min-width:128px; text-align:left; border-radius:14px; padding:12px 14px; cursor:pointer; border:1px solid var(--border); background:var(--surface-2); color:var(--text);}
+  .bloco-card.active{background:var(--chrome-bg); border-color:var(--chrome-bg); color:var(--chrome-text);}
+  .bloco-card .bl-label{font-size:10px; font-weight:700; text-transform:uppercase; letter-spacing:.03em; opacity:.6;}
+  .bloco-card .bl-name{font-size:16px; font-weight:700; margin-top:1px;}
+  .bloco-card .bl-counts{display:flex; gap:9px; margin-top:9px;}
+  .bloco-card .bl-counts .c{display:flex; align-items:center; gap:4px; font-size:12px; font-weight:700; font-family:'IBM Plex Mono';}
+
+  .estoque-pill-row{display:flex; gap:8px; flex-wrap:wrap; margin:10px 0 18px;}
+  .estoque-pill{display:inline-flex; align-items:center; gap:6px; font-size:12.5px; font-weight:700; padding:8px 12px; border-radius:999px; border:1px solid var(--border); background:var(--surface); color:var(--text); cursor:pointer;}
+  .estoque-pill.active{background:var(--chrome-bg); border-color:var(--chrome-bg); color:var(--chrome-text);}
+
   .unit-grid{display:grid; grid-template-columns:1fr 1fr; gap:10px;}
   /* min-width:0 - sem isso, um item de grid nao encolhe alem do conteudo (o preco, ex.
      "R$ 2.380.000", eh uma unica palavra sem espaco pra quebrar) e a grade acaba vazando
@@ -481,6 +497,21 @@ const I = {
   ev:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="2.5" width="16" height="19" rx="3"/><path d="M13 6.5l-4 6h3l-1 5 4-6h-3z"/></svg>',
   coworking:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="4.5" width="16" height="10" rx="1.5"/><path d="M2 18.5h20"/><path d="M9 18.5l1-4"/><path d="M15 18.5l-1-4"/></svg>',
   washer:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="3" width="16" height="18" rx="2.5"/><circle cx="12" cy="13.5" r="5"/><circle cx="12" cy="13.5" r="2"/><circle cx="7.5" cy="6" r="0.9" fill="currentColor" stroke="none"/><circle cx="10.5" cy="6" r="0.9" fill="currentColor" stroke="none"/></svg>',
+  gameroom:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="2.5" y="8" width="19" height="10" rx="5"/><path d="M7 11v4M5 13h4"/><circle cx="15" cy="12" r="1" fill="currentColor" stroke="none"/><circle cx="18" cy="14.5" r="1" fill="currentColor" stroke="none"/></svg>',
+  kidspool:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="8.5"/><circle cx="12" cy="12" r="3.2"/><path d="M12 3.5v5.3M12 15.2v5.3M3.5 12h5.3M15.2 12h5.3"/></svg>',
+  partyhall:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2.5a5 5 0 0 1 5 5c0 3.5-2.5 6-4 7.2l.6 1.8h-3.2l.6-1.8c-1.5-1.2-4-3.7-4-7.2a5 5 0 0 1 5-5z"/><path d="M11.5 15.8c-.3.6-1 1-.3 1.7s.6 1-.1 1.6"/></svg>',
+  visitorcar:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 16V11l2-4.5h12L20 11v5"/><path d="M4 16h16"/><path d="M6.5 16v2M17.5 16v2"/><circle cx="7.5" cy="16" r="1.3"/><circle cx="16.5" cy="16" r="1.3"/></svg>',
+  solarium:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="4.2"/><path d="M12 2.5v2.5M12 19v2.5M4.2 4.2l1.8 1.8M18 18l1.8 1.8M2.5 12H5M19 12h2.5M4.2 19.8L6 18M18 6l1.8-1.8"/></svg>',
+  grill:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><ellipse cx="12" cy="7" rx="8" ry="2.2"/><path d="M4 7v8a8 2.2 0 0 0 16 0V7"/><path d="M9 3v4M15 3v4"/></svg>',
+  praca:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="7" r="4"/><path d="M12 11v9"/><path d="M8 20h8"/><path d="M8.5 15.5h7"/></svg>',
+  scissors:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="6" cy="6" r="2.2"/><circle cx="6" cy="18" r="2.2"/><path d="M7.8 7.5L20 18M7.8 16.5L20 6"/></svg>',
+  minimarket:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M6 8h12l-1.2 10.5a2 2 0 0 1-2 1.5H9.2a2 2 0 0 1-2-1.5L6 8z"/><path d="M9 8V6a3 3 0 0 1 6 0v2"/></svg>',
+  headset:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 13v-1a8 8 0 0 1 16 0v1"/><rect x="2.5" y="12.5" width="4" height="6" rx="1.5"/><rect x="17.5" y="12.5" width="4" height="6" rx="1.5"/></svg>',
+  beermug:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M5 8h10v9a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V8z"/><path d="M15 10h2a2 2 0 0 1 0 4h-2"/><path d="M7 5.5c0-1 .8-1 .8-2S7 2 7 2M10.5 5.5c0-1 .8-1 .8-2S10.5 2 10.5 2"/></svg>',
+  wrench:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M14.7 6.3a4 4 0 0 0-5.4 5.4L3 18l3 3 6.3-6.3a4 4 0 0 0 5.4-5.4l-2.8 2.8-2-2 2.8-2.8z"/></svg>',
+  bike:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="6" cy="17" r="3.2"/><circle cx="18" cy="17" r="3.2"/><path d="M6 17l4-9h4l4 9M10 8H8"/></svg>',
+  package:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3.5 7.5L12 3l8.5 4.5v9L12 21l-8.5-4.5v-9z"/><path d="M3.5 7.5L12 12l8.5-4.5M12 12v9"/></svg>',
+  yard:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 20c3-10 9-14 16-16-1 9-6 14-16 16z"/><path d="M4 20c4-2 7-5 9-9"/></svg>',
 };
 /* catalogo de comodidades - icone + rotulo por chave, reaproveitado entre empreendimentos
    (ver DB.emps[].comodidades). extraido das descricoes que o Denis trouxe de cada incorporadora,
@@ -502,6 +533,22 @@ const AMENITIES = {
   ev:{icon:I.ev, label:'Vagas p/ veiculos eletricos'},
   coworking:{icon:I.coworking, label:'Coworking'},
   lavanderia:{icon:I.washer, label:'Lavanderia compartilhada'},
+  salao_jogos:{icon:I.gameroom, label:'Salao de jogos'},
+  piscina_infantil:{icon:I.kidspool, label:'Piscina infantil'},
+  salao_festas:{icon:I.partyhall, label:'Salao de festas'},
+  vagas_visitantes:{icon:I.visitorcar, label:'Vagas para visitantes'},
+  solario:{icon:I.solarium, label:'Solario'},
+  churrasqueira:{icon:I.grill, label:'Churrasqueira'},
+  fitness_externo:{icon:I.gym, label:'Fitness externo'},
+  praca:{icon:I.praca, label:'Praca'},
+  espaco_beleza:{icon:I.scissors, label:'Espaco beleza'},
+  mini_mercado:{icon:I.minimarket, label:'Mini mercado'},
+  espaco_gamer:{icon:I.headset, label:'Espaco gamer'},
+  sport_bar:{icon:I.beermug, label:'Sport bar'},
+  oficina_bike:{icon:I.wrench, label:'Oficina de bike'},
+  bicicletario:{icon:I.bike, label:'Bicicletario'},
+  delivery:{icon:I.package, label:'Delivery'},
+  quintal:{icon:I.yard, label:'Quintal amplo'},
 };
 
 /* ---------- dados mock ---------- */
@@ -786,7 +833,7 @@ function sfMapDetalheParaEmp(base, detalhe){
     fotosReais: detalhe.fotos || [],
     totalDisponiveis: detalhe.totalDisponiveis||0, totalReservadas: detalhe.totalReservadas||0,
     totalVendidas: vendidas, totalBloqueadas: detalhe.totalBloqueadas||0,
-    tabelasVendas: detalhe.tabelasVendas || [] };
+    tabelasVendas: detalhe.tabelasVendas || [], comodidades: detalhe.comodidades || base.comodidades || [] };
 }
 function sfMapEmpreendimentoInfo(e){
   return {
@@ -2305,32 +2352,71 @@ function amenityGrid(e){
     </div>
   `;
 }
-/* Estoque Comercial (pills D/R/G/B) + Tabelas de Vendas (chips) - mesma informacao que o
-   control-hub do unidadeMapaEspelho real mostra no topo do Espelho de Vendas; ja vinha na
-   resposta de getDetalhesUnidades, so nao estava sendo mapeada/renderizada no app ainda. */
-function empControlHub(e){
-  if(e.totalUnidades==null) return '';
+/* "Blocos" (selecao de Torre) + "Tabelas de Venda Disponiveis" + "Estoque Comercial" - mesma
+   organizacao e mesmos 3 blocos que o painel de controle do unidadeMapaEspelho real mostra no
+   topo do Espelho de Vendas (pedido do Denis: espelhar essa estrutura, nao so os dados soltos
+   que ja tinhamos). Card escuro = selecionado, mesmo padrao visual do --chrome-bg que o resto
+   do app ja usa pro proprio cabecalho/tab bar. */
+function blocosSelector(empId, torres, ativa){
+  if(torres.length<2) return '';
   return `
-    <div class="control-hub" style="display:flex; flex-direction:column; gap:10px; margin:14px 0;">
-      <div class="estoque-pills" style="display:flex; gap:8px; flex-wrap:wrap;">
-        <span class="badge badge-available">${e.totalDisponiveis||0} Disponivel${(e.totalDisponiveis||0)===1?'':'s'}</span>
-        <span class="badge badge-reserved">${e.totalReservadas||0} Reservada${(e.totalReservadas||0)===1?'':'s'}</span>
-        <span class="badge badge-sold">${e.totalVendidas||0} Vendida${(e.totalVendidas||0)===1?'':'s'}</span>
-        ${e.totalBloqueadas? `<span class="badge" style="background:color-mix(in srgb, #6b7280 12%, transparent); color:#6b7280;">${e.totalBloqueadas} Bloqueada${e.totalBloqueadas===1?'':'s'}</span>` : ''}
-      </div>
-      ${(e.tabelasVendas&&e.tabelasVendas.length) ? `
-        <div class="chip-row" style="margin:0;">
-          ${e.tabelasVendas.map(t=>`<span class="chip" style="cursor:default;">${t.name}</span>`).join('')}
-        </div>
-      ` : ''}
+    <div class="section-title">Blocos</div>
+    <div class="bloco-row">
+      ${torres.map(t=>{
+        const unidsTorre = DB.units.filter(u=>u.empId===empId && u.torre===t);
+        const disp = unidsTorre.filter(u=>u.status==='disponivel').length;
+        const res = unidsTorre.filter(u=>u.status==='reservada').length;
+        const vend = unidsTorre.filter(u=>u.status==='vendida').length;
+        return `
+          <button class="bloco-card ${t===ativa?'active':''}" onclick="state.filters.torreAtivaPorEmp['${empId}']='${t}'; render()">
+            <div class="bl-label">Torre</div>
+            <div class="bl-name">${t}</div>
+            <div class="bl-counts">
+              <span class="c"><span class="dot dot-available"></span>${disp}</span>
+              <span class="c"><span class="dot dot-reserved"></span>${res}</span>
+              <span class="c"><span class="dot dot-sold"></span>${vend}</span>
+            </div>
+          </button>
+        `;
+      }).join('')}
     </div>
   `;
 }
-function torreSelector(empId, torres, ativa){
-  if(torres.length<2) return '';
+function tabelasVendasCards(e){
+  const tabelas = e.tabelasVendas || [];
+  if(!tabelas.length) return '';
   return `
-    <div class="chip-row" style="margin-bottom:10px;">
-      ${torres.map(t=>`<button class="chip ${t===ativa?'active':''}" onclick="state.filters.torreAtivaPorEmp['${empId}']='${t}'; render()">Torre ${t}</button>`).join('')}
+    <div class="section-title">Tabelas de venda disponiveis</div>
+    <div class="stack" style="margin-bottom:6px;">
+      ${tabelas.map(t=>`
+        <div class="list-card" style="cursor:default;">
+          <div style="width:34px; height:34px; border-radius:9px; background:var(--surface-2); display:flex; align-items:center; justify-content:center; color:var(--accent); flex:0 0 auto;">${I.calendar}</div>
+          <div style="flex:1; min-width:0;">
+            <div style="font-weight:600; font-size:13.5px;">${t.name}</div>
+            <div class="muted" style="font-size:11.5px;">${fmtDataBR(t.vigenciaDe)} a ${fmtDataBR(t.vigenciaAte)}</div>
+          </div>
+        </div>
+      `).join('')}
+    </div>
+  `;
+}
+/* Estoque Comercial - selo com o total + pills coloridos (D/R/G/B), os mesmos pills servem de
+   filtro pra grade de unidades logo abaixo (substitui os chips de texto simples que existiam
+   antes, que mostravam o filtro sem nenhum numero). */
+function estoquePills(e, filter){
+  if(e.totalUnidades==null) return '';
+  const total = e.totalUnidades||0;
+  return `
+    <div class="section-title" style="display:flex; align-items:baseline; gap:7px;">
+      <span>Estoque comercial</span>
+      <span class="muted" style="font-size:12px; font-weight:600;">${total} unidade${total===1?'':'s'}</span>
+    </div>
+    <div class="estoque-pill-row">
+      <button class="estoque-pill ${filter==='todas'?'active':''}" onclick="state.filters.unitFilter='todas'; render()">Todas</button>
+      <button class="estoque-pill ${filter==='disponivel'?'active':''}" onclick="state.filters.unitFilter='disponivel'; render()"><span class="dot dot-available"></span>${e.totalDisponiveis||0} Disponivel</button>
+      <button class="estoque-pill ${filter==='reservada'?'active':''}" onclick="state.filters.unitFilter='reservada'; render()"><span class="dot dot-reserved"></span>${e.totalReservadas||0} Reservada</button>
+      <button class="estoque-pill ${filter==='vendida'?'active':''}" onclick="state.filters.unitFilter='vendida'; render()"><span class="dot dot-sold"></span>${e.totalVendidas||0} Vendida</button>
+      ${e.totalBloqueadas? `<span class="estoque-pill" style="cursor:default;"><span class="dot" style="background:#6b7280;"></span>${e.totalBloqueadas} Bloqueada</span>` : ''}
     </div>
   `;
 }
@@ -2344,14 +2430,7 @@ function screenEmpDetail(id){
     ? state.filters.torreAtivaPorEmp[id] : torres[0];
   const unidadesSection = !carregado
     ? `<div class="sync-row" style="margin-top:18px;"><span class="spinner"></span> Carregando unidades...</div>`
-    : `<div class="chip-row">
-        <button class="chip ${filter==='disponivel'?'active':''}" onclick="state.filters.unitFilter='disponivel'; render()">Disponiveis</button>
-        <button class="chip ${filter==='reservada'?'active':''}" onclick="state.filters.unitFilter='reservada'; render()">Reservadas</button>
-        <button class="chip ${filter==='vendida'?'active':''}" onclick="state.filters.unitFilter='vendida'; render()">Vendidas</button>
-        <button class="chip ${filter==='todas'?'active':''}" onclick="state.filters.unitFilter='todas'; render()">Todas</button>
-      </div>
-      ${torreSelector(id, torres, torreAtiva)}
-      ${torreAtiva!=null ? torreSection(id, torreAtiva, filter) : emptyState('Nenhuma unidade cadastrada ainda', I.building)}`;
+    : (torreAtiva!=null ? torreSection(id, torreAtiva, filter) : emptyState('Nenhuma unidade cadastrada ainda', I.building));
   const body = `
     ${empGallery(e)}
     <div style="display:flex; justify-content:space-between; align-items:flex-start; gap:8px;">
@@ -2365,9 +2444,13 @@ function screenEmpDetail(id){
       <div class="stat-tile"><div class="n mono">${e.totalUnidades}</div><div class="l">Unidades</div></div>
       <div class="stat-tile"><div class="n mono">${e.vendidoPct}%</div><div class="l">Vendido</div></div>
     </div>
-    ${empControlHub(e)}
-
     ${amenityGrid(e)}
+
+    ${blocosSelector(id, torres, torreAtiva)}
+
+    ${tabelasVendasCards(e)}
+
+    ${estoquePills(e, filter)}
 
     <div class="section-title">Unidades</div>
     ${unidadesSection}
