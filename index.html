@@ -143,9 +143,9 @@
   .avatar{width:42px; height:42px; border-radius:50%; background:var(--surface-2); display:flex; align-items:center; justify-content:center; font-weight:700; font-family:'Poppins',sans-serif; color:var(--accent); flex:0 0 auto; font-size:14px; overflow:hidden;}
   .avatar img{width:100%; height:100%; object-fit:cover; display:block;}
   .avatar-editable{position:relative; cursor:pointer; border:none; padding:0; background:none;}
-  .avatar-edit-badge{position:absolute; right:-2px; bottom:-2px; width:20px; height:20px; border-radius:50%; background:var(--chrome-accent); color:var(--chrome-bg); display:flex; align-items:center; justify-content:center; border:2px solid var(--chrome-bg-2);}
-  .avatar-edit-badge svg{width:11px; height:11px;}
-  .avatar-hero{width:48px; height:48px; background:var(--chrome-bg-2); color:var(--chrome-accent); font-size:15px; border:1.5px solid var(--chrome-border);}
+  .avatar-edit-badge{position:absolute; right:-3px; bottom:-3px; width:26px; height:26px; border-radius:50%; background:var(--chrome-accent); color:var(--chrome-bg); display:flex; align-items:center; justify-content:center; border:2px solid var(--chrome-bg-2);}
+  .avatar-edit-badge svg{width:14px; height:14px;}
+  .avatar-hero{width:72px; height:72px; background:var(--chrome-bg-2); color:var(--chrome-accent); font-size:21px; border:1.5px solid var(--chrome-border);}
 
   .live-dot{width:7px; height:7px; border-radius:50%; background:var(--status-available); flex:0 0 auto; animation:livepulse 1.8s ease-in-out infinite;}
   @keyframes livepulse{0%,100%{opacity:1;} 50%{opacity:.35;}}
@@ -2350,6 +2350,11 @@ const CONTA_EDIT_TEXT_FIELDS = ['rg','telefone','email','profissao','renda','nat
 function captureContaEditForm(){
   const ce = state.contaEdit;
   if(!ce) return;
+  /* marca que o corretor ja mexeu no formulario - se o GET da conta (sfCarregarContaDetalhe)
+     so terminar DEPOIS disso, screenContaEditar nao pode mais "re-semear" os campos com o que
+     veio do Salesforce, senao apaga silenciosamente uma escolha que o corretor ja fez enquanto
+     a tela ainda carregava (corrida real: GET lento + corretor rapido). */
+  ce.touched = true;
   CONTA_EDIT_TEXT_FIELDS.forEach(key=>{
     const el = document.getElementById('ce-'+key.toLowerCase());
     if(el) ce[key] = el.value;
@@ -2406,11 +2411,11 @@ function screenContaEditar(id){
   const c = clienteById(id);
   if(c.real) sfCarregarContaDetalhe(id);
   const raw = state.sfContasRaw[id] || null;
-  if(!state.contaEdit || state.contaEdit.id !== id || (raw && !state.contaEdit.seeded)){
+  if(!state.contaEdit || state.contaEdit.id !== id || (raw && !state.contaEdit.seeded && !state.contaEdit.touched)){
     const endereco = (raw && raw.endereco) || {};
     const estadoCivilAtual = (raw && raw.estadoCivil) || (c.estadoCivil!=='-' ? c.estadoCivil : '');
     state.contaEdit = {
-      id, seeded: !!raw || !c.real,
+      id, seeded: !!raw || !c.real, touched: false,
       rg: (raw && raw.rg) || (c.rg && c.rg!=='-' ? c.rg : '') || '',
       telefone: (raw && raw.telefone) || c.telefone || '',
       email: (raw && raw.email) || c.email || '',
@@ -2460,7 +2465,7 @@ function screenContaEditar(id){
     <div class="field"><label for="ce-conjugenovocpf">CPF do conjuge</label><input id="ce-conjugenovocpf" value="${ce.conjugeNovoCpf||''}" placeholder="000.000.000-00"></div>
   ` : `
     <div class="search-wrap" style="margin-bottom:10px;">${I.search}<input id="ce-conjugebusca" value="${ce.conjugeBusca||''}" placeholder="Buscar conjuge por nome ou CPF" onkeydown="if(event.key==='Enter'){event.preventDefault(); contaEditBuscarConjuge();}"></div>
-    <button class="btn-ghost" style="margin-bottom:8px;" onclick="contaEditBuscarConjuge()">${I.search} Buscar no Salesforce</button>
+    <button class="btn btn-ghost" style="margin-bottom:8px;" onclick="contaEditBuscarConjuge()">${I.search} Buscar no Salesforce</button>
     ${(ce.conjugeBuscaResultados||[]).length ? `
       <div class="stack" style="margin-bottom:8px;">
         ${ce.conjugeBuscaResultados.map(r=>`
@@ -2473,7 +2478,7 @@ function screenContaEditar(id){
           </div>`).join('')}
       </div>
     ` : ''}
-    <button class="btn-ghost" onclick="contaEditMostrarNovoConjuge()">${I.plus} Cadastrar novo conjuge</button>
+    <button class="btn btn-ghost" onclick="contaEditMostrarNovoConjuge()">${I.plus} Cadastrar novo conjuge</button>
   `;
 
   const body = `
