@@ -294,6 +294,8 @@
   .doc-camerabtn{width:32px; height:32px; border-radius:50%; border:1px solid var(--border); background:var(--surface); display:flex; align-items:center; justify-content:center; color:var(--accent); cursor:pointer; flex:0 0 auto;}
   .doc-camerabtn svg{width:15px; height:15px;}
   .doc-camerabtn:disabled{opacity:.5;}
+  .doc-chevron{display:inline-flex; transition:transform .18s ease;}
+  .doc-chevron.open{transform:rotate(90deg);}
 
   .field-grid{display:grid; grid-template-columns:1fr 1fr; gap:8px; margin-top:11px;}
   .field-card{background:var(--surface-2); border-radius:11px; padding:8px 10px;}
@@ -950,7 +952,7 @@ async function sfCarregarDocumentos(contaId){
   try{
     const checklist = await sfApi(`/documentos?contaId=${contaId}`);
     const c = clienteById(contaId);
-    if(c) c.documentosReais = (checklist.documentos||[]).map(d=>({...d, campos:null, titularidade:null}));
+    if(c) c.documentosReais = (checklist.documentos||[]).map(d=>({...d, campos:null, titularidade:null, expandido:false}));
   }catch(e){
     state.sfDocumentosCarregados[contaId] = false;
     console.error('Nao foi possivel carregar os documentos', e);
@@ -981,7 +983,8 @@ function handleDocUploadChange(ev){
       const d = c && c.documentosReais && c.documentosReais.find(x=>x.tipoDocumento===tipoDocumento);
       if(d){
         Object.assign(d, {hasFile:true, status:'uploaded', statusLabel:res.status, confianca:res.confidence,
-          contentDocumentId:res.contentDocumentId, fileName:file.name, campos:res.campos||[], titularidade:res.titularidade||null});
+          contentDocumentId:res.contentDocumentId, fileName:file.name, campos:res.campos||[], titularidade:res.titularidade||null,
+          expandido:true});
       }
       render();
       toast(res.status==='Verde' ? 'Documento enviado e processado' : 'Documento enviado - revisao necessaria');
@@ -1004,12 +1007,44 @@ function sfVerDadosDocumento(clienteId, tipoDocumento, contentDocumentId){
     state.sfDocProcessando[key] = false;
     const c = clienteById(clienteId);
     const d = c && c.documentosReais && c.documentosReais.find(x=>x.tipoDocumento===tipoDocumento);
-    if(d) Object.assign(d, {statusLabel:res.status, confianca:res.confidence, campos:res.campos||[], titularidade:res.titularidade||null});
+    if(d) Object.assign(d, {statusLabel:res.status, confianca:res.confidence, campos:res.campos||[], titularidade:res.titularidade||null, expandido:true});
     render();
   }).catch(e=>{
     state.sfDocProcessando[key] = false;
     render();
     toast('Nao foi possivel ler os dados do documento: '+e.message);
+  });
+}
+/* mostrar/ocultar o painel de titularidade + campos extraidos de um documento ja enviado -
+   se os campos ainda nao foram buscados nesta sessao, busca (sfVerDadosDocumento) e abre;
+   senao so alterna, sem chamada de rede (fica guardado em memoria). */
+function toggleDocumentoExpandido(clienteId, tipoDocumento){
+  const c = clienteById(clienteId);
+  const d = c && c.documentosReais && c.documentosReais.find(x=>x.tipoDocumento===tipoDocumento);
+  if(!d || !d.hasFile) return;
+  if(d.expandido){ d.expandido = false; render(); return; }
+  if(d.campos){ d.expandido = true; render(); return; }
+  sfVerDadosDocumento(clienteId, tipoDocumento, d.contentDocumentId);
+}
+/* remove o documento da conta (e o resultado do IDP junto) - o corretor pode trocar de ideia
+   sobre qual arquivo anexou sem precisar sobrescrever; a linha volta pro estado "pendente". */
+function excluirDocumentoReal(clienteId, tipoDocumento, contentDocumentId){
+  const c = clienteById(clienteId);
+  const d = c && c.documentosReais && c.documentosReais.find(x=>x.tipoDocumento===tipoDocumento);
+  if(!d) return;
+  const key = `${clienteId}_${tipoDocumento}`;
+  state.sfDocExcluindo[key] = true;
+  render();
+  sfApi(`/documentos/${contentDocumentId}`, {method:'DELETE'}).then(()=>{
+    state.sfDocExcluindo[key] = false;
+    Object.assign(d, {hasFile:false, status:'empty', statusLabel:null, confianca:null, processadoEm:null,
+      contentDocumentId:null, fileName:null, campos:null, titularidade:null, expandido:false});
+    render();
+    toast('Documento removido');
+  }).catch(e=>{
+    state.sfDocExcluindo[key] = false;
+    render();
+    toast('Nao foi possivel remover o documento: '+e.message);
   });
 }
 /* aplica os campos extraidos na conta - o corretor revisa na tela e confirma; se nao houver
@@ -1189,14 +1224,27 @@ function documentosChecklistReal(cliente){
     </div>
   `;
 }
+/* rotulo do selo do documento - prioriza o resultado da titularidade (o que importa pro
+   corretor: "essa pessoa e' mesmo a da conta?"), so cai pro status bruto do IDP (Verde/Vermelho)
+   quando a titularidade ainda nao foi conferida nesta sessao (documento carregado do checklist,
+   ainda nao expandido) - pedido do Denis: "confirmado" em vez de "verde". */
+function docPillInfo(d){
+  if(!d.hasFile) return {cls:'neutral', txt:'Pendente'};
+  const t = d.titularidade;
+  if(t && t.status==='confirmado') return {cls:'ok', txt:'Confirmado'};
+  if(t && t.status==='divergente') return {cls:'err', txt:'Divergente'};
+  if(t && t.status==='verificar') return {cls:'warn', txt:'Verificar'};
+  if(d.statusLabel==='Vermelho') return {cls:'warn', txt:'Revisar'};
+  return {cls:'neutral', txt:'Enviado'};
+}
 function documentoRowReal(clienteId, d){
   const key = `${clienteId}_${d.tipoDocumento}`;
   const uploading = state.sfDocUploading[key];
   const processando = state.sfDocProcessando[key];
   const aplicando = state.sfDocAplicando[key];
-  const iconCls = !d.hasFile ? '' : d.statusLabel==='Verde' ? 'on' : d.statusLabel==='Vermelho' ? 'warn' : '';
-  const pillCls = !d.hasFile ? 'neutral' : d.statusLabel==='Verde' ? 'ok' : d.statusLabel==='Vermelho' ? 'err' : 'warn';
-  const pillTxt = !d.hasFile ? 'Pendente' : (d.statusLabel || 'Enviado');
+  const excluindo = state.sfDocExcluindo[key];
+  const pill = docPillInfo(d);
+  const iconCls = pill.cls==='ok' ? 'on' : pill.cls==='err' ? 'warn' : '';
   const hint = docTipoHint(d.tipoDocumento);
   return `
     <div class="doc-card">
@@ -1208,17 +1256,25 @@ function documentoRowReal(clienteId, d){
           <div class="doc-file">${d.hasFile ? (I.check+ (d.fileName||'Documento enviado')) : 'Aguardando envio'}</div>
         </div>
         <div class="doc-actions">
-          <span class="doc-pill ${pillCls}">${pillTxt}</span>
+          <span class="doc-pill ${pill.cls}">${pill.txt}</span>
+          ${d.hasFile ? `
+            <button class="list-remove" title="Remover documento" ${excluindo?'disabled':''} onclick="excluirDocumentoReal('${clienteId}','${d.tipoDocumento}','${d.contentDocumentId}')">
+              ${excluindo? '<span class="spinner"></span>' : I.close}
+            </button>
+          ` : ''}
           <button class="doc-camerabtn" title="${d.hasFile?'Trocar arquivo':'Anexar (camera ou galeria)'}" ${uploading?'disabled':''} onclick="iniciarUploadDocumento('${clienteId}','${d.tipoDocumento}')">
             ${uploading? '<span class="spinner"></span>' : I.camera}
           </button>
+          ${d.hasFile ? `
+            <button class="doc-camerabtn" title="${d.expandido?'Recolher':'Ver detalhes'}" ${processando?'disabled':''} onclick="toggleDocumentoExpandido('${clienteId}','${d.tipoDocumento}')">
+              ${processando? '<span class="spinner"></span>' : `<span class="doc-chevron${d.expandido?' open':''}">${I.chevron}</span>`}
+            </button>
+          ` : ''}
         </div>
       </div>
-      ${d.hasFile ? `
+      ${d.hasFile && d.expandido ? `
         ${!d.campos ? `
-          <button class="btn-ghost" style="font-size:12px; padding:8px 2px 0;" ${processando?'disabled':''} onclick="sfVerDadosDocumento('${clienteId}','${d.tipoDocumento}','${d.contentDocumentId}')">
-            ${processando? '<span class="spinner"></span> Lendo dados...' : 'Ver dados extraidos'}
-          </button>
+          <div class="muted" style="font-size:11.5px; margin-top:8px;">Lendo dados do documento...</div>
         ` : d.campos.length ? `
           ${titularidadeBox(d.titularidade)}
           <div class="field-grid">
@@ -1389,7 +1445,7 @@ const state = {
   visitaDraft:null,
   sfEmpreendimentosLoaded:false, sfEmpreendimentosError:null, sfDetalhesCarregados:{}, sfUsuarioNome:null,
   sfFotosCache:{}, sfVisitasCarregadas:{}, sfContasCarregadas:{}, sfGaleriaCache:{}, sfBoletosCarregados:{},
-  sfDocumentosCarregados:{}, sfDocUploading:{}, sfDocProcessando:{}, sfDocAplicando:{}, docUploadTarget:null,
+  sfDocumentosCarregados:{}, sfDocUploading:{}, sfDocProcessando:{}, sfDocAplicando:{}, sfDocExcluindo:{}, docUploadTarget:null,
 };
 
 function go(screen, params={}){ state.stacks[state.tab].push({screen, params}); render({resetScroll:true}); }
@@ -1519,6 +1575,7 @@ function doLogout(){
   state.sfDocUploading = {};
   state.sfDocProcessando = {};
   state.sfDocAplicando = {};
+  state.sfDocExcluindo = {};
   state.docUploadTarget = null;
   state.tab = 'home';
   state.stacks = { home:[{screen:'home'}], leads:[{screen:'leadsList'}], contas:[{screen:'contasList'}], empreendimentos:[{screen:'empList'}], reservas:[{screen:'resList'}] };
