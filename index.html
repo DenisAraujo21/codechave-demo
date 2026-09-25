@@ -1,4 +1,4 @@
-<!doctype html><html><head><meta charset=utf8><meta name=viewport content="width=device-width,initial-scale=1,viewport-fit=cover"><style>:root{color-scheme:light;box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}html{scroll-padding-top:env(safe-area-inset-top,0px)}body{margin:0;padding:0;font:14px -apple-system,BlinkMacSystemFont,sans-serif;background:#faf9f5;color:#141413}img{max-width:100%}[hidden]:not([hidden=until-found i]){display:none!important}</style></head><body>
+<!doctype html><html><head><meta charset=utf8><meta name=viewport content="width=device-width,initial-scale=1,viewport-fit=cover"><style>:root{color-scheme:light;box-sizing:border-box}html{scroll-padding-top:env(safe-area-inset-top,0px)}body{margin:0;padding:0;font:14px -apple-system,BlinkMacSystemFont,sans-serif;background:#faf9f5;color:#141413}img{max-width:100%}[hidden]:not([hidden=until-found i]){display:none!important}</style></head><body>
 
 <title>CodeChave</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -295,7 +295,12 @@
   /* checklist de documentos real (IDP) - inspirado no componente do Salesforce (caIdpDocumentProcessor) */
   .doc-card{background:var(--surface); border:1px solid var(--border); border-radius:16px; padding:13px 14px;}
   .doc-card + .doc-card{margin-top:10px;}
-  .doc-top{display:flex; align-items:flex-start; gap:11px;}
+  /* icone dentro de um quadradinho generico (ex: "Visita agendada" no Lead, "Tabela de Vendas"
+     no Empreendimento) - sem isso o svg do icone (sem width/height propria) renderiza no
+     tamanho padrao do navegador, muito maior que a caixa, e aparece como um quadrado vazio
+     (o icone fica cortado/fora de vista) - mesma familia de bug ja vista em .btn-ghost sem .btn. */
+  .ic-badge svg{width:18px; height:18px;}
+  .doc-top{display:flex; align-items:flex-start; gap:11px; flex-wrap:wrap;}
   .doc-icon{width:36px; height:36px; border-radius:11px; flex:0 0 auto; display:flex; align-items:center; justify-content:center; background:var(--surface-2); color:var(--text-muted);}
   .doc-icon svg{width:18px; height:18px;}
   .doc-icon.on{background:color-mix(in srgb, var(--status-available) 14%, transparent); color:var(--status-available);}
@@ -1029,7 +1034,12 @@ async function sfCarregarDocumentos(contaId){
     const c = clienteById(contaId);
     if(c) c.documentosReais = (checklist.documentos||[]).map(d=>({...d, campos:null, titularidade:null, expandido:false}));
   }catch(e){
-    state.sfDocumentosCarregados[contaId] = false;
+    /* NAO resetar o guard aqui (era "= false") - documentosChecklistReal chama essa funcao a
+       cada render enquanto a tela do documento estiver aberta, e resetar o guard numa falha
+       (ex: sessao do Salesforce expirada) fazia tentar de novo, falhar de novo, renderizar de
+       novo... um loop infinito sincrono que travava o app e gerava milhares de erros por
+       segundo (achado testando esta fase - nao reportado pelo Denis, mas acontece de verdade
+       se o token OAuth expirar com essa tela aberta). */
     console.error('Nao foi possivel carregar os documentos', e);
   }
   render();
@@ -1582,7 +1592,7 @@ function onAvatarFileChosen(event){
 const state = {
   tab:'home', mode:'login', loginLoading:false,
   stacks:{ home:[{screen:'home'}], leads:[{screen:'leadsList'}], contas:[{screen:'contasList'}], empreendimentos:[{screen:'empList'}], reservas:[{screen:'resList'}], negocios:[{screen:'negociosList'}] },
-  filters:{ leadsQuery:'', contasQuery:'', empQuery:'', unitFilter:'disponivel', comissaoFilter:'todas', torreAtivaPorEmp:{} },
+  filters:{ leadsQuery:'', contasQuery:'', empQuery:'', unitFilter:'disponivel', unitSearch:'', comissaoFilter:'todas', torreAtivaPorEmp:{} },
   context:{ preselectCliente:null },
   wizard:null,
   galeria:{},
@@ -1736,7 +1746,7 @@ function doLogout(){
   DB.negocios = [];
   state.tab = 'home';
   state.stacks = { home:[{screen:'home'}], leads:[{screen:'leadsList'}], contas:[{screen:'contasList'}], empreendimentos:[{screen:'empList'}], reservas:[{screen:'resList'}], negocios:[{screen:'negociosList'}] };
-  state.filters = { leadsQuery:'', contasQuery:'', empQuery:'', unitFilter:'disponivel', comissaoFilter:'todas', torreAtivaPorEmp:{} };
+  state.filters = { leadsQuery:'', contasQuery:'', empQuery:'', unitFilter:'disponivel', unitSearch:'', comissaoFilter:'todas', torreAtivaPorEmp:{} };
   state.context = { preselectCliente:null };
   state.wizard = null;
   state.galeria = {};
@@ -1974,7 +1984,7 @@ function screenLeadDetail(id){
     </div>
     ${visita ? `
       <div class="card" style="padding:12px 14px; margin-bottom:18px; display:flex; align-items:center; gap:12px;">
-        <div style="width:38px; height:38px; border-radius:10px; background:var(--surface-2); display:flex; align-items:center; justify-content:center; color:var(--accent); flex:0 0 auto;">${I.calendar}</div>
+        <div class="ic-badge" style="width:38px; height:38px; border-radius:10px; background:var(--surface-2); display:flex; align-items:center; justify-content:center; color:var(--accent); flex:0 0 auto;">${I.calendar}</div>
         <div style="flex:1; min-width:0;">
           <div style="font-weight:700; font-size:13.5px;">Visita agendada</div>
           <div class="muted" style="font-size:12px;">${fmtDataBR(visita.data)} as ${visita.hora} - ${visita.local||'Local a definir'}</div>
@@ -2091,9 +2101,17 @@ function saveCliente(leadId){
     logradouro, numero, complemento, bairro, cidade, estado, cep,
   })})
     .then(res=>{
+      /* promove a conta local (id fake "cNN") pro Id real da Account no Salesforce - sem isso
+         ela fica "mock" pra sempre: editar endereco/documentos nunca mais chega no Salesforce
+         (Object.assign so' local, perdido ao recarregar o app) e reservar uma unidade real pra
+         esse cliente manda o id fake pro Apex, que rejeita com "Invalid id: cNN" (mesmo id fake
+         que wizardSaveNovoCliente ja troca pelo real quando o cliente e' cadastrado direto no
+         wizard de reserva - aqui, na conversao de lead, faltava fazer o mesmo). */
+      cliente.id = res.contaId;
       cliente.sfId = res.contaId;
+      cliente.real = true;
       lead.status = 'Convertido';
-      render();
+      replaceTop('clienteDetail', {id: res.contaId});
       toast('Lead convertido no Salesforce');
     })
     .catch(e=>{ toast('Conta salva localmente, mas a conversao no Salesforce falhou: '+e.message); });
@@ -2278,7 +2296,7 @@ function screenClienteDetail(id){
       ${(c.reservasReais&&c.reservasReais.length)? `
         <div class="stack">${c.reservasReais.map(r=>`
           <div class="list-card" style="cursor:default;">
-            <div style="width:34px; height:34px; border-radius:9px; background:var(--surface-2); display:flex; align-items:center; justify-content:center; color:var(--status-available); flex:0 0 auto;">${I.contract}</div>
+            <div class="ic-badge" style="width:34px; height:34px; border-radius:9px; background:var(--surface-2); display:flex; align-items:center; justify-content:center; color:var(--status-available); flex:0 0 auto;">${I.contract}</div>
             <div style="flex:1; min-width:0;">
               <div style="font-weight:600; font-size:13.5px;">${r.unidadeNome} - ${r.empreendimentoNome}</div>
               <div class="muted" style="font-size:11.5px;">${r.valor?brl(r.valor):''}</div>
@@ -2291,7 +2309,7 @@ function screenClienteDetail(id){
         <div class="section-title">Contratos</div>
         <div class="stack">${contratos.map(r=>`
           <button class="list-card" onclick="switchTab('reservas'); go('resDetail',{id:'${r.id}'})">
-            <div style="width:34px; height:34px; border-radius:9px; background:var(--surface-2); display:flex; align-items:center; justify-content:center; color:var(--status-available); flex:0 0 auto;">${I.contract}</div>
+            <div class="ic-badge" style="width:34px; height:34px; border-radius:9px; background:var(--surface-2); display:flex; align-items:center; justify-content:center; color:var(--status-available); flex:0 0 auto;">${I.contract}</div>
             <div style="flex:1; min-width:0;">
               <div style="font-weight:600; font-size:13.5px;">${unitCode(unitById(r.unitId))} - ${empById(r.empId).nome}</div>
               <div class="muted" style="font-size:11.5px;">${r.protocolo} - ${brl(r.valor)}</div>
@@ -2799,7 +2817,7 @@ function tabelasVendasCards(e){
     <div class="stack" style="margin-bottom:6px;">
       ${tabelas.map(t=>`
         <div class="list-card" style="cursor:default;">
-          <div style="width:34px; height:34px; border-radius:9px; background:var(--surface-2); display:flex; align-items:center; justify-content:center; color:var(--accent); flex:0 0 auto;">${I.calendar}</div>
+          <div class="ic-badge" style="width:34px; height:34px; border-radius:9px; background:var(--surface-2); display:flex; align-items:center; justify-content:center; color:var(--accent); flex:0 0 auto;">${I.calendar}</div>
           <div style="flex:1; min-width:0;">
             <div style="font-weight:600; font-size:13.5px;">${t.name}</div>
             <div class="muted" style="font-size:11.5px;">${fmtDataBR(t.vigenciaDe)} a ${fmtDataBR(t.vigenciaAte)}</div>
@@ -2839,7 +2857,7 @@ function screenEmpDetail(id){
     ? state.filters.torreAtivaPorEmp[id] : torres[0];
   const unidadesSection = !carregado
     ? `<div class="sync-row" style="margin-top:18px;"><span class="spinner"></span> Carregando unidades...</div>`
-    : (torreAtiva!=null ? torreSection(id, torreAtiva, filter) : emptyState('Nenhuma unidade cadastrada ainda', I.building));
+    : (torreAtiva!=null ? torreSection(id, torreAtiva, filter, state.filters.unitSearch) : emptyState('Nenhuma unidade cadastrada ainda', I.building));
   const body = `
     ${empGallery(e)}
     <div style="display:flex; justify-content:space-between; align-items:flex-start; gap:8px;">
@@ -2862,13 +2880,16 @@ function screenEmpDetail(id){
     ${estoquePills(e, filter)}
 
     <div class="section-title">Unidades</div>
+    <div class="search-wrap" style="margin-bottom:12px;">${I.search}<input id="unitSearch" placeholder="Buscar unidade por codigo" value="${state.filters.unitSearch}" oninput="state.filters.unitSearch=this.value; render()"></div>
     ${unidadesSection}
   `;
   return {title:e.nome, back:true, body};
 }
-function torreSection(empId, torre, filter){
+function torreSection(empId, torre, filter, search){
   const todas = DB.units.filter(u=>u.empId===empId && u.torre===torre);
-  const units = filter==='todas' ? todas : todas.filter(u=>u.status===filter);
+  const porStatus = filter==='todas' ? todas : todas.filter(u=>u.status===filter);
+  const termo = (search||'').trim().toLowerCase().replace(/[-\s]/g,'');
+  const units = !termo ? porStatus : porStatus.filter(u=>unitCode(u).toLowerCase().replace(/[-\s]/g,'').includes(termo));
   const disp = todas.filter(u=>u.status==='disponivel').length;
   const res = todas.filter(u=>u.status==='reservada').length;
   const vend = todas.filter(u=>u.status==='vendida').length;
@@ -2882,7 +2903,7 @@ function torreSection(empId, torre, filter){
           <span class="tc"><span class="dot dot-sold"></span>${vend}</span>
         </div>
       </div>
-      ${units.length? `<div class="unit-grid">${units.map(unitTile).join('')}</div>` : emptyState('Nenhuma unidade nessa categoria', I.building)}
+      ${units.length? `<div class="unit-grid">${units.map(unitTile).join('')}</div>` : emptyState(termo?'Nenhuma unidade encontrada':'Nenhuma unidade nessa categoria', I.building)}
     </div>
   `;
 }
@@ -3347,26 +3368,40 @@ function wizardSaveNovoCliente(){
   const telefone = document.getElementById('wc-tel').value.trim();
   const email = document.getElementById('wc-email').value.trim();
   const u = unitById(state.wizard.unitId);
-  const id = 'c'+(++seq);
-  const cliente = { id, nome, cpf, telefone, email, estadoCivil:'-', profissao:'-', renda:0, documentos: novoDocumentosChecklist() };
-  DB.clientes.unshift(cliente);
-  state.wizard.clienteId = id;
-  state.wizard.novoClienteMode = false;
-  render();
+
   if(!u.real){
+    const id = 'c'+(++seq);
+    const cliente = { id, nome, cpf, telefone, email, estadoCivil:'-', profissao:'-', renda:0, documentos: novoDocumentosChecklist() };
+    DB.clientes.unshift(cliente);
+    state.wizard.clienteId = id;
+    state.wizard.novoClienteMode = false;
+    render();
     toast('Conta cadastrada');
     return;
   }
-  toast('Cadastrando conta no Salesforce...');
+
+  /* unidade real: so' libera o wizard com o Id real da Account do Salesforce - antes disso o
+     wizard usava um id local (ex: "c103") assim que o formulario era salvo, e se o corretor
+     confirmasse a reserva antes do POST terminar, a Oportunidade era criada com esse id fake,
+     que o Apex rejeita com "Invalid id: c103" (ja aconteceu 2x em teste real). Enquanto
+     "criandoConta" esta true o botao "Salvar e continuar" fica desabilitado. */
+  state.wizard.criandoConta = true;
+  render();
   sfApi('/contas', {method:'POST', body:JSON.stringify({nome, cpf, telefone, email})})
     .then(res=>{
-      /* troca o id local pelo id real do Salesforce - a reserva precisa do Id real da Account */
-      cliente.id = res.id; cliente.real = true;
-      if(state.wizard && state.wizard.clienteId===id) state.wizard.clienteId = res.id;
+      const cliente = { id: res.id, nome, cpf, telefone, email, estadoCivil:'-', profissao:'-', renda:0, documentos: novoDocumentosChecklist(), real:true };
+      DB.clientes.unshift(cliente);
+      state.wizard.clienteId = res.id;
+      state.wizard.novoClienteMode = false;
+      state.wizard.criandoConta = false;
       render();
       toast('Conta cadastrada no Salesforce');
     })
-    .catch(e=>toast('Nao foi possivel cadastrar a conta no Salesforce: '+e.message));
+    .catch(e=>{
+      state.wizard.criandoConta = false;
+      render();
+      toast('Nao foi possivel cadastrar a conta no Salesforce: '+e.message);
+    });
 }
 function wizardToggleAceite(){ state.wizard.aceite = !state.wizard.aceite; render(); }
 function wizardSetObs(v){ state.wizard.obs = v; }
@@ -3505,7 +3540,7 @@ function tabelaPickerBody(tabelas){
     <div class="stack">
       ${tabelas.map(t=>`
         <button class="list-card" onclick="wizardSelecionarTabela('${t.id}')">
-          <div style="width:34px; height:34px; border-radius:9px; background:var(--surface-2); display:flex; align-items:center; justify-content:center; color:var(--accent); flex:0 0 auto;">${I.calendar}</div>
+          <div class="ic-badge" style="width:34px; height:34px; border-radius:9px; background:var(--surface-2); display:flex; align-items:center; justify-content:center; color:var(--accent); flex:0 0 auto;">${I.calendar}</div>
           <div style="flex:1; min-width:0;">
             <div style="font-weight:600; font-size:13.5px;">${t.name}</div>
             <div class="muted" style="font-size:11.5px;">${fmtDataBR(t.vigenciaDe)} a ${fmtDataBR(t.vigenciaAte)} - ${t.series.length} serie${t.series.length===1?'':'s'}</div>
@@ -3599,6 +3634,15 @@ function confirmarReserva(){
     return;
   }
 
+  /* trava de seguranca: unidade real precisa de um Id de Account real do Salesforce (15/18
+     caracteres alfanumericos), nunca um id local tipo "c103" - se isso passar batido por
+     qualquer outro caminho, o Apex rejeita com "Invalid id" so' depois de ja mostrar "Confirmando..."
+     pro corretor; melhor avisar aqui, antes de gastar a chamada. */
+  if(!/^[a-zA-Z0-9]{15,18}$/.test(w.clienteId||'')){
+    toast('Aguarde o cadastro da conta terminar antes de confirmar a reserva');
+    return;
+  }
+
   /* fluxo real: so mostra a tela de sucesso depois que o Salesforce confirmar - CA_RestReservas
      ja cria a Oportunidade (RecordType CA_Reserva) automaticamente quando negociacaoId vem vazio. */
   w.confirmando = true;
@@ -3646,7 +3690,7 @@ function renderWizard(){
           <div class="field"><label for="wc-tel">Telefone</label><input id="wc-tel"></div>
         </div>
         <div class="field"><label for="wc-email">E-mail</label><input id="wc-email" type="email"></div>
-        <button class="btn btn-primary" onclick="wizardSaveNovoCliente()">${I.check} Salvar e continuar</button>
+        <button class="btn btn-primary" ${w.criandoConta?'disabled':''} onclick="wizardSaveNovoCliente()">${w.criandoConta?'Cadastrando...':`${I.check} Salvar e continuar`}</button>
       `;
     } else {
       const clienteSel = w.clienteId ? clienteById(w.clienteId) : null;
