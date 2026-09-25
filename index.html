@@ -347,6 +347,7 @@
   .tl-dot-wrap{display:flex; flex-direction:column; align-items:center;}
   .tl-dot{width:11px; height:11px; border-radius:50%; background:var(--border); flex:0 0 auto; margin-top:3px;}
   .tl-dot.done{background:var(--status-available);}
+  .tl-dot.atual{background:var(--accent); box-shadow:0 0 0 3px color-mix(in srgb, var(--accent) 25%, transparent);}
   .tl-line{width:2px; flex:1; background:var(--border); min-height:22px;}
   .tl-item:last-child .tl-line{display:none;}
   .tl-body{padding-bottom:18px;}
@@ -460,6 +461,10 @@
         <button class="tab-btn" data-tab="reservas" onclick="switchTab('reservas')">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 3h14v18l-7-4-7 4V3z"/></svg>
           <span>Reservas</span>
+        </button>
+        <button class="tab-btn" data-tab="negocios" onclick="switchTab('negocios')">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 17l6-6 4 4 8-8"/><path d="M15 7h6v6"/></svg>
+          <span>Negocios</span>
         </button>
       </nav>
       <div class="home-indicator"></div>
@@ -627,6 +632,9 @@ const DB = {
       {tipo:'Pos-chaves (financiamento)', valor:2880000, parcelas:1, periodicidade:'Unica', quando:'Na entrega das chaves'},
     ]},
   ],
+  /* Negocios (Oportunidade real) - sem mock: essa aba so' existe conectado ao Salesforce
+     (sfCarregarNegocios preenche isso; nao ha conceito de "negocio" no dataset de exemplo). */
+  negocios:[],
   /* historico financeiro: boletos gerados a partir da serie de pagamentos de uma
      reserva ja assinada - r1 (Bruno) ainda esta 'Em analise', entao nao tem cobranca
      gerada ainda; r2 (Fernanda) ja assinou, entao ja tem parcelas em andamento */
@@ -1172,6 +1180,7 @@ async function sfCarregarReservas(){
       clienteNomeInline: r.clienteNome, unidadeNomeInline: r.unidadeNome, empreendimentoNomeInline: r.empreendimentoNome,
       temCotacao: !!r.temCotacao, documentacaoEmAnalise: !!r.documentacaoEmAnalise,
       aprovadoIncorporadora: !!r.aprovadoIncorporadora, contratoAssinado: !!r.contratoAssinado, real: true,
+      negociacaoId: r.negociacaoId || null, negociacaoStageName: r.negociacaoStageName || null,
     }));
   }catch(e){
     console.error('Nao foi possivel carregar as reservas', e);
@@ -1572,7 +1581,7 @@ function onAvatarFileChosen(event){
 
 const state = {
   tab:'home', mode:'login', loginLoading:false,
-  stacks:{ home:[{screen:'home'}], leads:[{screen:'leadsList'}], contas:[{screen:'contasList'}], empreendimentos:[{screen:'empList'}], reservas:[{screen:'resList'}] },
+  stacks:{ home:[{screen:'home'}], leads:[{screen:'leadsList'}], contas:[{screen:'contasList'}], empreendimentos:[{screen:'empList'}], reservas:[{screen:'resList'}], negocios:[{screen:'negociosList'}] },
   filters:{ leadsQuery:'', contasQuery:'', empQuery:'', unitFilter:'disponivel', comissaoFilter:'todas', torreAtivaPorEmp:{} },
   context:{ preselectCliente:null },
   wizard:null,
@@ -1584,6 +1593,7 @@ const state = {
   sfFotosCache:{}, sfVisitasCarregadas:{}, sfContasCarregadas:{}, sfContasRaw:{}, sfGaleriaCache:{}, sfBoletosCarregados:{},
   sfDocumentosCarregados:{}, sfDocUploading:{}, sfDocProcessando:{}, sfDocAplicando:{}, sfDocExcluindo:{}, sfDocArquivoCache:{}, docUploadTarget:null,
   sfTabelasVendasCache:{},
+  sfNegociosLoaded:false, sfNegocioDetalhesCarregados:{},
 };
 
 function go(screen, params={}){ state.stacks[state.tab].push({screen, params}); render({resetScroll:true}); }
@@ -1596,7 +1606,7 @@ function goBack(){
 }
 /* tela principal de cada aba - usada pra "resetar" a aba sempre que o corretor toca no
    botao dela na tab bar (ver switchTab) */
-const TAB_ROOTS = { home:'home', leads:'leadsList', contas:'contasList', empreendimentos:'empList', reservas:'resList' };
+const TAB_ROOTS = { home:'home', leads:'leadsList', contas:'contasList', empreendimentos:'empList', reservas:'resList', negocios:'negociosList' };
 /* tocar num botao da tab bar sempre leva pra tela principal daquela aba, mesmo que o corretor
    tivesse navegado fundo nela antes (ex: Comissoes, aberta a partir da Home) - assim "Inicio"
    sempre volta pra Home sem precisar usar o botao de voltar la em cima. quando switchTab e
@@ -1626,6 +1636,8 @@ function currentScreen(){
     case 'unidadeDetail': return screenUnidadeDetail(top.params.id);
     case 'resList': return screenResList();
     case 'resDetail': return screenResDetail(top.params.id);
+    case 'negociosList': return screenNegociosList();
+    case 'negocioDetail': return screenNegocioDetail(top.params.id);
     case 'visitaForm': return screenVisitaForm();
     case 'comissoes': return screenComissoes();
     default: return {title:'', back:false, body:''};
@@ -1719,8 +1731,11 @@ function doLogout(){
   state.sfDocArquivoCache = {};
   state.docUploadTarget = null;
   state.sfTabelasVendasCache = {};
+  state.sfNegociosLoaded = false;
+  state.sfNegocioDetalhesCarregados = {};
+  DB.negocios = [];
   state.tab = 'home';
-  state.stacks = { home:[{screen:'home'}], leads:[{screen:'leadsList'}], contas:[{screen:'contasList'}], empreendimentos:[{screen:'empList'}], reservas:[{screen:'resList'}] };
+  state.stacks = { home:[{screen:'home'}], leads:[{screen:'leadsList'}], contas:[{screen:'contasList'}], empreendimentos:[{screen:'empList'}], reservas:[{screen:'resList'}], negocios:[{screen:'negociosList'}] };
   state.filters = { leadsQuery:'', contasQuery:'', empQuery:'', unitFilter:'disponivel', comissaoFilter:'todas', torreAtivaPorEmp:{} };
   state.context = { preselectCliente:null };
   state.wizard = null;
@@ -3022,6 +3037,9 @@ function screenResDetail(id){
           ${r.criandoCotacao? '<span class="spinner"></span> Criando Cotacao...' : 'Criar Cotacao'}
         </button>
       `}
+      ${r.negociacaoId ? `
+        <button class="btn btn-secondary" style="margin-top:8px;" onclick="switchTab('negocios'); go('negocioDetail',{id:'${r.negociacaoId}'})">Ver negocio completo</button>
+      ` : ''}
       <a class="btn btn-secondary" style="margin-top:8px; display:block; text-align:center;" href="${(sfSessionGet()||{}).instanceUrl}/lightning/r/CA_Reserva__c/${r.id}/view" target="_blank" rel="noopener">Abrir no Salesforce</a>
     ` : `
       <button class="btn btn-secondary" style="margin-top:6px;" onclick="toast('Disponivel na versao conectada ao Salesforce')">Abrir no Salesforce</button>
@@ -3052,6 +3070,122 @@ function criarCotacaoDaReserva(id){
 
 function emptyState(msg, iconSvg){
   return `<div class="empty">${iconSvg}<div>${msg}</div></div>`;
+}
+
+/* ---------- NEGOCIOS (Oportunidade real) ----------
+   pedido do Denis apos a automacao real de fases (Proposta Enviada > Aguardando Aprovacoes >
+   Confeccao de contrato > Aguardando assinatura > Contrato assinado > Fechado Ganho) ja estar
+   rodando no Salesforce - o app so' EXIBE essa linha do tempo, nao muda nada (ver
+   CA_RestOportunidades, so' leitura). Sem mock: essa aba so' faz sentido conectado. */
+async function sfCarregarNegocios(){
+  try{
+    const negocios = await sfApi('/oportunidades');
+    DB.negocios = negocios.map(n=>({
+      id: n.id, nome: n.nome, stageName: n.stageName, valor: n.valor,
+      clienteNome: n.clienteNome, unidadeNome: n.unidadeNome, empreendimentoNome: n.empreendimentoNome,
+      ganha: !!n.ganha, fechada: !!n.fechada,
+    }));
+    state.sfNegociosLoaded = true;
+  }catch(e){
+    console.error('Nao foi possivel carregar os negocios', e);
+  }
+  render();
+}
+async function sfCarregarNegocioDetalhe(id){
+  if(state.sfNegocioDetalhesCarregados[id]) return;
+  state.sfNegocioDetalhesCarregados[id] = true;
+  try{
+    const d = await sfApi(`/oportunidades/${id}`);
+    let n = negocioById(id);
+    if(!n){ n = {id}; DB.negocios.push(n); }
+    Object.assign(n, {
+      nome: d.nome, stageName: d.stageName, valor: d.valor, clienteNome: d.clienteNome,
+      unidadeNome: d.unidadeNome, empreendimentoNome: d.empreendimentoNome,
+      ganha: !!d.ganha, fechada: !!d.fechada, dataFechamento: d.dataFechamento,
+      casoCreditoStatus: d.casoCreditoStatus, casoJuridicoStatus: d.casoJuridicoStatus,
+      contratoStatus: d.contratoStatus, contratoStatusAssinatura: d.contratoStatusAssinatura,
+      linhaDoTempo: d.linhaDoTempo || [],
+    });
+  }catch(e){
+    delete state.sfNegocioDetalhesCarregados[id];
+    toast('Nao foi possivel carregar o negocio: '+e.message);
+  }
+  render();
+}
+function negocioById(id){ return DB.negocios.find(n=>n.id===id); }
+/* unidadeNome vem cru do Product2.Name ("<Empreendimento> - Apartamento X"), mesmo formato
+   ja tratado em resNomeUnidade - tira o prefixo repetido pra nao aparecer "TorreBlanca -
+   TorreBlanca - Apartamento 1101" na tela. */
+function negocioUnidadeCurta(n){
+  if(!n.unidadeNome) return '';
+  const prefixo = (n.empreendimentoNome||'')+' - ';
+  return n.unidadeNome.startsWith(prefixo) ? n.unidadeNome.slice(prefixo.length) : n.unidadeNome;
+}
+function screenNegociosList(){
+  if(!state.sfNegociosLoaded) sfCarregarNegocios();
+  const body = !state.sfNegociosLoaded
+    ? `<div class="sync-row"><span class="spinner"></span> Carregando negocios...</div>`
+    : DB.negocios.length
+      ? `<div class="stack">${DB.negocios.map(negocioCard).join('')}</div>`
+      : emptyState('Nenhum negocio ainda', I.emptyDoc);
+  return {title:'Negocios', back:false, body};
+}
+function negocioStageBadgeClass(n){
+  if(n.fechada) return n.ganha ? 'badge-available' : 'badge-sold';
+  return 'badge-blue';
+}
+function negocioCard(n){
+  return `
+    <button class="list-card" onclick="go('negocioDetail',{id:'${n.id}'})">
+      <div style="flex:1; min-width:0;">
+        <div style="font-weight:600; font-size:13.5px;">${n.clienteNome || n.nome}</div>
+        <div class="muted" style="font-size:11.5px;">${n.empreendimentoNome ? n.empreendimentoNome+' - '+negocioUnidadeCurta(n) : (n.unidadeNome||'-')}</div>
+      </div>
+      <div style="display:flex; flex-direction:column; align-items:flex-end; gap:4px; flex:0 0 auto;">
+        ${n.valor ? `<div class="mono" style="font-weight:600; font-size:13px;">${brl(n.valor)}</div>` : ''}
+        <span class="badge ${negocioStageBadgeClass(n)}">${n.stageName}</span>
+      </div>
+    </button>
+  `;
+}
+function screenNegocioDetail(id){
+  sfCarregarNegocioDetalhe(id);
+  const n = negocioById(id);
+  if(!n){
+    return {title:'Negocio', back:true, body:`<div class="sync-row"><span class="spinner"></span> Carregando...</div>`};
+  }
+  const linha = n.linhaDoTempo || [];
+  const body = `
+    <div class="card" style="padding:14px; margin-bottom:16px;">
+      <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px;">
+        <span class="eyebrow mono">${n.nome||''}</span>
+        <span class="badge ${negocioStageBadgeClass(n)}">${n.stageName||''}</span>
+      </div>
+      <div style="font-weight:700; font-size:15.5px;">${n.clienteNome||'-'}</div>
+      ${n.empreendimentoNome ? `<div class="muted" style="font-size:12.5px; margin-top:2px;">${n.empreendimentoNome} - Unidade ${negocioUnidadeCurta(n)}</div>` : ''}
+    </div>
+
+    ${n.valor ? `
+      <div class="kv-table" style="margin-bottom:18px;">
+        <div class="kv-row"><span class="k">Valor</span><span class="v">${brl(n.valor)}</span></div>
+      </div>
+    ` : ''}
+
+    <div class="section-title" style="margin-top:0;">Andamento</div>
+    <div class="timeline">
+      ${linha.map(p=>`
+        <div class="tl-item">
+          <div class="tl-dot-wrap"><div class="tl-dot ${p.status==='concluido'?'done':''} ${p.status==='atual'?'atual':''}"></div><div class="tl-line"></div></div>
+          <div class="tl-body">
+            <b>${p.estagio}</b>
+            <span>${p.status==='concluido'?'Concluido':p.status==='atual'?'Em andamento':p.status==='nao_aplicavel'?'-':'Pendente'}${p.detalhe?' - '+p.detalhe:''}</span>
+          </div>
+        </div>`).join('')}
+    </div>
+
+    <a class="btn btn-secondary" style="margin-top:8px; display:block; text-align:center;" href="${(sfSessionGet()||{}).instanceUrl}/lightning/r/Opportunity/${n.id}/view" target="_blank" rel="noopener">Abrir no Salesforce</a>
+  `;
+  return {title:'Negocio', back:true, body};
 }
 
 /* ---------- AGENDAMENTO DE VISITA ----------
@@ -3674,6 +3808,7 @@ function finishWizard(viewDetail){
     sfCarregarLeads();
     sfCarregarContas();
     sfCarregarReservas();
+    sfCarregarNegocios();
   } else {
     render();
   }
