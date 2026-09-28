@@ -756,7 +756,7 @@ async function sfCarregarReservas(){
     DB.reservas = reservas.map(r=>({
       id: r.id, protocolo: r.id, status: r.status,
       data: r.criadoEm ? new Date(r.criadoEm).toLocaleDateString('pt-BR') : '',
-      valor: r.valor||0, pagamentos:[],
+      valor: r.valor||0, pagamentos:[], series: r.series||[],
       clienteNomeInline: r.clienteNome, unidadeNomeInline: r.unidadeNome, empreendimentoNomeInline: r.empreendimentoNome,
       temCotacao: !!r.temCotacao, documentacaoEmAnalise: !!r.documentacaoEmAnalise,
       aprovadoIncorporadora: !!r.aprovadoIncorporadora, contratoAssinado: !!r.contratoAssinado, real: true,
@@ -2986,6 +2986,12 @@ function resCard(r){
 function screenResDetail(id){
   const r = reservaById(id);
   const nome = resNomeCliente(r), unidadeNome = resNomeUnidade(r), empNome = resNomeEmpreendimento(r);
+  /* r.series vem do Fluxo de Pagamento real (CA_RestReservas.doGet); r.pagamentos e' o formato
+     antigo, mocado, so preenchido em memoria na hora que o wizard confirma (some ao recarregar
+     a aba - por isso a serie real tem prioridade quando existe). */
+  const seriePagamentosItems = (r.series && r.series.length)
+    ? r.series.map(s=>({tipo:s.tipo, parcelas:s.parcelas, periodicidade: s.primeiroVencimento ? ('a partir de '+fmtDataBR(s.primeiroVencimento)) : '', valor:s.valor}))
+    : (r.pagamentos || []);
   /* andamento real (conta reais): "Documentacao em analise" = Cotacao criada (SyncedQuoteId),
      "Aprovacao da incorporadora" = Oportunidade chegou em "Confeccao de contrato" ou depois
      (mesma progressao de estagios que ReservasService.ESTAGIOS_QUE_EXIGEM_RESERVA_ATIVA ja usa -
@@ -3017,9 +3023,10 @@ function screenResDetail(id){
       <div class="kv-row"><span class="k">Data da reserva</span><span class="v">${r.data}</span></div>
     </div>
 
+    ${seriePagamentosItems.length ? `
     <div class="section-title" style="margin-top:0;">Serie de pagamentos</div>
     <div class="stack" style="margin-bottom:18px;">
-      ${r.pagamentos.map(p=>`
+      ${seriePagamentosItems.map(p=>`
         <div class="list-card" style="cursor:default;">
           <div style="flex:1;">
             <div style="font-weight:600; font-size:13.5px;">${p.tipo}</div>
@@ -3028,7 +3035,7 @@ function screenResDetail(id){
           <div class="mono" style="font-weight:600; font-size:13.5px;">${brl(p.valor)}</div>
         </div>
       `).join('')}
-    </div>
+    </div>` : ''}
 
     <div class="section-title">Andamento</div>
     <div class="timeline">
@@ -3668,7 +3675,12 @@ function confirmarReserva(){
   sfApi('/reservas', {method:'POST', body:JSON.stringify(body)})
     .then(res=>{
       const id = res.reservaId;
-      DB.reservas.unshift({id, protocolo:id, clienteId:w.clienteId, unitId:w.unitId, empId:w.empId, valor, pagamentos:w.pagamentos, status:'Em analise', data:hojeBR(), real:true, temCotacao:false});
+      /* espelha a serie que acabou de ser enviada (sem esperar um reload de /reservas) -
+         mesmo formato que CA_RestReservas.doGet devolve (tipo/parcelas/valor). */
+      const seriesRecemCriadas = (w.tabelaId && w.seriesEditor && w.seriesEditor.length)
+        ? w.seriesEditor.map(s=>({tipo:s.nome, parcelas:s.quantidade, valor:s.valor, primeiroVencimento:null}))
+        : [];
+      DB.reservas.unshift({id, protocolo:id, clienteId:w.clienteId, unitId:w.unitId, empId:w.empId, valor, pagamentos:w.pagamentos||[], series:seriesRecemCriadas, status:'Em analise', data:hojeBR(), real:true, temCotacao:false});
       u.status = 'reservada';
       w.confirmando = false; w.step = 4; w.protocolo = id; w.createdId = id; w.syncing = false; w.negociacaoId = res.negociacaoId;
       render({resetScroll:true});
