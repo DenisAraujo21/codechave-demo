@@ -556,6 +556,9 @@ async function sfCarregarContaDetalhe(id){
       dataExpedicaoRG: d.dataExpedicaoRG || null, orgaoEmissor: d.orgaoEmissor || null,
       genero: d.genero || null, documento: d.documento || null, pessoaEstrangeira: d.pessoaEstrangeira || null,
       conjugeId: d.conjugeId || null, conjugeNome: d.conjugeNome || null,
+      negociacaoAbertaId: d.negociacaoAbertaId || null,
+      negociacaoAbertaStage: d.negociacaoAbertaStage || null,
+      negociacaoAbertaUnidade: d.negociacaoAbertaUnidade || null,
       reservasReais: (d.reservas||[]).map(r=>({
         id: r.id, status: r.status, valor: r.valor,
         unidadeNome: r.unidadeNome || '-', empreendimentoNome: r.empreendimentoNome || '-',
@@ -3325,6 +3328,7 @@ function startWizard(unitId){
   state.wizard = {
     step:1, unitId, empId:u.empId,
     clienteId: state.context.preselectCliente || null,
+    negociacaoEscolha: null,
     novoClienteMode:false,
     pagamentos:[],
     tabelaId:null, seriesEditor:null,
@@ -3337,6 +3341,7 @@ function startWizard(unitId){
   };
   state.context.preselectCliente = null;
   render({resetScroll:true});
+  if(state.wizard.clienteId){ sfCarregarContaDetalhe(state.wizard.clienteId).then(()=>render()); }
 }
 function wizardBack(){
   const w = state.wizard;
@@ -3346,8 +3351,21 @@ function wizardBack(){
   state.mode='tabs'; state.wizard=null; render({resetScroll:true});
 }
 function wizardGoto(step){ state.wizard.step = step; render({resetScroll:true}); }
-function wizardSelectCliente(id){ state.wizard.clienteId = id; render(); }
+function wizardSelectCliente(id){
+  const w = state.wizard;
+  w.clienteId = id;
+  w.negociacaoEscolha = null; // reseta o aviso ao trocar de conta
+  render();
+  /* busca (ou reaproveita do cache) se esse cliente ja tem uma negociacao em andamento - o
+     aviso some se nao tiver nenhuma, sem bloquear o corretor (ver body do wizard, passo 1). */
+  sfCarregarContaDetalhe(id).then(()=>render());
+}
 function wizardShowNovoCliente(){ state.wizard.novoClienteMode = true; render({resetScroll:true}); }
+/* corretor decide adicionar a unidade a negociacao que o cliente ja tem em andamento (evita
+   Oportunidade nova pra quem ja esta no meio de uma reserva) ou manter separada mesmo assim -
+   nenhuma das duas bloqueia o wizard, e' so' um aviso (pedido do Denis). */
+function wizardUsarReservaExistente(){ state.wizard.negociacaoEscolha = 'existente'; render(); }
+function wizardCriarReservaSeparada(){ state.wizard.negociacaoEscolha = 'nova'; render(); }
 /* busca contas reais no Salesforce (nao so as que ja tem reserva) - necessario pro wizard
    porque quem esta reservando pela primeira vez ainda nao aparece em DB.clientes. */
 function wizardBuscarConta(){
@@ -3668,6 +3686,12 @@ function confirmarReserva(){
     unidadeId: w.unitId, clienteId: w.clienteId,
     motivo: w.motivo, media: 'Site', observacoes: w.obs || '',
   };
+  /* corretor escolheu continuar na reserva/negociacao que o cliente ja tem em andamento (ver
+     aviso em wizardVerificarReservaAberta) em vez de abrir uma Oportunidade nova e separada. */
+  const clienteAtual = clienteById(w.clienteId);
+  if(w.negociacaoEscolha==='existente' && clienteAtual && clienteAtual.negociacaoAbertaId){
+    body.negociacaoId = clienteAtual.negociacaoAbertaId;
+  }
   if(w.tabelaId && w.seriesEditor && w.seriesEditor.length){
     body.tabelaVendasId = w.tabelaId;
     body.seriesAjustadas = w.seriesEditor.map(s=>({catalogoId:s.catalogoId, valor:s.valor, quantidade:s.quantidade, ordem:s.ordem}));
@@ -3751,6 +3775,29 @@ function renderWizard(){
             <p class="muted" style="font-size:11.5px; margin-top:-2px;">Documentacao pendente nao impede a reserva - o cliente pode enviar depois.</p>
           </div>
         ` : ''}
+
+        ${clienteSel && clienteSel.negociacaoAbertaId && w.negociacaoEscolha!=='nova' ? (w.negociacaoEscolha==='existente' ? `
+          <div class="alert-card warn" style="margin-top:14px;">
+            ${I.check}
+            <div>
+              <b>Vai entrar na reserva em andamento</b>
+              <div class="muted" style="font-size:12px; margin-top:2px;">${clienteSel.negociacaoAbertaUnidade||'unidade nao identificada'} - ${clienteSel.negociacaoAbertaStage||''}</div>
+              <button class="btn-ghost" style="margin-top:6px; padding:4px 0; font-size:12px;" onclick="wizardCriarReservaSeparada()">Desfazer, criar reserva separada</button>
+            </div>
+          </div>
+        ` : `
+          <div class="alert-card warn" style="margin-top:14px;">
+            ${I.alert}
+            <div style="flex:1;">
+              <b>${clienteSel.nome} ja tem uma reserva em andamento</b>
+              <div class="muted" style="font-size:12px; margin-top:2px;">${clienteSel.negociacaoAbertaUnidade||'unidade nao identificada'} - ${clienteSel.negociacaoAbertaStage||''}</div>
+              <div style="display:flex; gap:8px; margin-top:8px; flex-wrap:wrap;">
+                <button class="btn btn-primary" style="padding:7px 12px; font-size:12.5px;" onclick="wizardUsarReservaExistente()">Adicionar a essa reserva</button>
+                <button class="btn-ghost" style="padding:7px 12px; font-size:12.5px;" onclick="wizardCriarReservaSeparada()">Criar reserva separada</button>
+              </div>
+            </div>
+          </div>
+        `) : ''}
 
         <div style="margin-top:18px;">
           <button class="btn btn-primary" ${!w.clienteId?'disabled':''} onclick="wizardGoto(2)">Continuar</button>
