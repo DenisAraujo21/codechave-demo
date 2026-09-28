@@ -559,6 +559,7 @@ async function sfCarregarContaDetalhe(id){
       negociacaoAbertaId: d.negociacaoAbertaId || null,
       negociacaoAbertaStage: d.negociacaoAbertaStage || null,
       negociacaoAbertaUnidade: d.negociacaoAbertaUnidade || null,
+      negociacaoAbertaTemAtiva: !!d.negociacaoAbertaTemAtiva,
       reservasReais: (d.reservas||[]).map(r=>({
         id: r.id, status: r.status, valor: r.valor,
         unidadeNome: r.unidadeNome || '-', empreendimentoNome: r.empreendimentoNome || '-',
@@ -3791,10 +3792,17 @@ function renderWizard(){
             <div style="flex:1;">
               <b>${clienteSel.nome} ja tem uma reserva em andamento</b>
               <div class="muted" style="font-size:12px; margin-top:2px;">${clienteSel.negociacaoAbertaUnidade||'unidade nao identificada'} - ${clienteSel.negociacaoAbertaStage||''}</div>
-              <div style="display:flex; gap:8px; margin-top:8px; flex-wrap:wrap;">
-                <button class="btn btn-primary" style="padding:7px 12px; font-size:12.5px;" onclick="wizardUsarReservaExistente()">Adicionar a essa reserva</button>
-                <button class="btn-ghost" style="padding:7px 12px; font-size:12.5px;" onclick="wizardCriarReservaSeparada()">Criar reserva separada</button>
-              </div>
+              ${clienteSel.negociacaoAbertaTemAtiva ? `
+                <div class="muted" style="font-size:12px; margin-top:6px;">Essa unidade ainda esta Ativa - o Salesforce so permite uma reserva ativa por negociacao. Cancele-a (na tela de Reservas) antes de poder somar outra unidade aqui.</div>
+                <div style="margin-top:8px;">
+                  <button class="btn-ghost" style="padding:7px 12px; font-size:12.5px;" onclick="wizardCriarReservaSeparada()">Criar reserva separada mesmo assim</button>
+                </div>
+              ` : `
+                <div style="display:flex; gap:8px; margin-top:8px; flex-wrap:wrap;">
+                  <button class="btn btn-primary" style="padding:7px 12px; font-size:12.5px;" onclick="wizardUsarReservaExistente()">Adicionar a essa reserva</button>
+                  <button class="btn-ghost" style="padding:7px 12px; font-size:12.5px;" onclick="wizardCriarReservaSeparada()">Criar reserva separada</button>
+                </div>
+              `}
             </div>
           </div>
         `) : ''}
