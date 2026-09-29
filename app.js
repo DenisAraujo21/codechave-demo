@@ -476,6 +476,31 @@ async function sfCarregarFotoPorId(cvId){
     state.sfFotoFalhou[cvId] = true; // quem quiser (ex: planta) cai num fallback em vez de spinner eterno
   }
 }
+/* abre um PDF gerado (Contrato/Termo de Reserva) numa aba nova - mesmo fetch autenticado que
+   sfCarregarFotoPorId ja usa pra imagens (o endpoint CA_RestFoto, /foto/{contentVersionId}, agora
+   tambem serve PDF com Content-Type application/pdf correto), mas sem cachear blob (o PDF e'
+   aberto uma vez, nao redesenhado a cada render como as fotos da galeria). O window.open('', ...)
+   e' chamado ANTES do fetch (sincrono, dentro do proprio clique) pra nao ser bloqueado como popup -
+   navegadores so' permitem window.open sem bloqueio quando disparado direto por um gesto do
+   usuario; se acontecer depois de um await, cai no bloqueador. */
+async function sfAbrirPdf(cvId){
+  if(!cvId) return;
+  const janela = window.open('', '_blank');
+  try{
+    const session = sfSessionGet();
+    const resp = await fetch(`${session.instanceUrl}${SF_CONFIG.apiPath}/foto/${cvId}`, {headers:{'Authorization':`Bearer ${session.accessToken}`}});
+    if(resp.status===401){ sfSessaoExpirada(); throw new Error('sessao expirada'); }
+    if(!resp.ok) throw new Error('PDF indisponivel');
+    const blob = await resp.blob();
+    const pdfBlob = blob.type === 'application/pdf' ? blob : new Blob([blob], {type:'application/pdf'});
+    const url = URL.createObjectURL(pdfBlob);
+    if(janela) janela.location.href = url;
+    else window.open(url, '_blank'); // bloqueador impediu o window.open vazio - tenta de novo (provavel novo bloqueio)
+  }catch(e){
+    if(janela) janela.close();
+    toast('Nao foi possivel abrir o PDF: '+e.message);
+  }
+}
 function sfFotoBanner(emp){
   if(state.sfFotosCache[emp.id]){
     return `<img src="${state.sfFotosCache[emp.id]}" alt="Fachada - ${emp.nome}" style="width:100%; height:100%; object-fit:cover; display:block;">`;
@@ -505,6 +530,14 @@ function sfDataCurta(iso){
   if(!iso) return '';
   const d = new Date(iso);
   return String(d.getDate()).padStart(2,'0') + '/' + String(d.getMonth()+1).padStart(2,'0');
+}
+/* data + hora (dd/MM/yyyy HH:mm) - usada pras datas de envio/assinatura do Contrato
+   (CA_DataEnvioAssinatura__c/CA_DataAssinatura__c), que sao DateTime, nao so Date. */
+function sfDataHora(iso){
+  if(!iso) return '';
+  const d = new Date(iso);
+  return String(d.getDate()).padStart(2,'0') + '/' + String(d.getMonth()+1).padStart(2,'0') + '/' + d.getFullYear()
+    + ' ' + String(d.getHours()).padStart(2,'0') + ':' + String(d.getMinutes()).padStart(2,'0');
 }
 async function sfCarregarLeads(){
   try{
@@ -1211,6 +1244,7 @@ const state = {
   sfDocumentosCarregados:{}, sfDocUploading:{}, sfDocProcessando:{}, sfDocAplicando:{}, sfDocExcluindo:{}, sfDocArquivoCache:{}, docUploadTarget:null,
   sfTabelasVendasCache:{},
   sfNegociosLoaded:false, sfNegocioDetalhesCarregados:{},
+  sfContratosNegocio:{}, sfContratosNegocioCarregados:{},
   sfDetalhesCarregando:{}, sfCapaTentada:{}, sfFotoFalhou:{},
   sfComissoes:[], sfComissoesLoaded:false, sfComissoesError:null,
   sfRoletaStatus:null, sfRoletaCadastrado:null,
@@ -3094,6 +3128,13 @@ function screenResDetail(id){
           ${r.criandoCotacao? '<span class="spinner"></span> Criando Cotacao...' : 'Criar Cotacao'}
         </button>
       `}
+      ${r.termoContentVersionId ? `
+        <button class="btn btn-secondary" style="margin-top:8px;" onclick="sfAbrirPdf('${r.termoContentVersionId}')">Ver termo de reserva</button>
+      ` : `
+        <button class="btn btn-secondary" style="margin-top:8px;" ${r.gerandoTermo?'disabled':''} onclick="sfGerarTermoReserva('${r.id}')">
+          ${r.gerandoTermo ? '<span class="spinner"></span> Gerando termo...' : 'Gerar termo de reserva'}
+        </button>
+      `}
       ${r.negociacaoId ? `
         <button class="btn btn-secondary" style="margin-top:8px;" onclick="switchTab('negocios'); go('negocioDetail',{id:'${r.negociacaoId}'})">Ver negocio completo</button>
       ` : ''}
@@ -3122,6 +3163,28 @@ function criarCotacaoDaReserva(id){
       r.criandoCotacao = false;
       render();
       toast('Nao foi possivel criar a Cotacao: '+e.message);
+    });
+}
+/* gera o Termo de Reserva em PDF (ContratoDocumentoService.gerarTermoReserva via POST
+   /reservas/{id}/termo) - documento mais simples que o Contrato de Venda, so termo de intencao.
+   r.termoContentVersionId fica so' em memoria (como r.temCotacao) - some se recarregar a aba,
+   sem problema, o corretor gera de novo se precisar. */
+function sfGerarTermoReserva(id){
+  const r = reservaById(id);
+  r.gerandoTermo = true;
+  render();
+  toast('Gerando termo de reserva...');
+  sfApi(`/reservas/${id}/termo`, {method:'POST'})
+    .then(res=>{
+      r.gerandoTermo = false;
+      r.termoContentVersionId = res.contentVersionId;
+      render();
+      toast('Termo de reserva gerado');
+    })
+    .catch(e=>{
+      r.gerandoTermo = false;
+      render();
+      toast('Nao foi possivel gerar o termo de reserva: '+e.message);
     });
 }
 
@@ -3178,6 +3241,127 @@ function negocioUnidadeCurta(n){
   const prefixo = (n.empreendimentoNome||'')+' - ';
   return n.unidadeNome.startsWith(prefixo) ? n.unidadeNome.slice(prefixo.length) : n.unidadeNome;
 }
+/* Contratos (Contract) vinculados a negociacao - CA_RestContratos.cls, GET /contratos?negociacaoId=.
+   Cache separado do detalhe da Oportunidade (sfNegocioDetalhesCarregados/DB.negocios) porque
+   precisa ser recarregado sozinho depois de gerar PDF ou avancar status de assinatura, sem
+   re-buscar a Oportunidade inteira. Guard booleano igual sfCarregarVisitasLead/sfCarregarDocumentos
+   (chamado direto do screenNegocioDetail a cada render, so busca de verdade uma vez). */
+async function sfCarregarContratosNegocio(negocioId){
+  if(state.sfContratosNegocioCarregados[negocioId]) return;
+  state.sfContratosNegocioCarregados[negocioId] = true;
+  await sfRecarregarContratosNegocio(negocioId);
+}
+/* recarrega de verdade, sem o guard - usado tambem depois de gerar PDF/avancar status, pra
+   pegar o contentVersionId ou o status novo sem esperar reabrir a tela. */
+async function sfRecarregarContratosNegocio(negocioId){
+  try{
+    state.sfContratosNegocio[negocioId] = await sfApi(`/contratos?negociacaoId=${negocioId}`);
+  }catch(e){
+    console.error('Nao foi possivel carregar os contratos da negociacao', e);
+    if(state.sfContratosNegocio[negocioId] === undefined) state.sfContratosNegocio[negocioId] = [];
+  }
+  render();
+}
+/* gera o PDF do contrato (ContratoDocumentoService.gerarContratoVenda via POST
+   /contratos/{id}/gerar-pdf) - estado de "gerando" fica no proprio objeto do contrato (igual
+   r.criandoCotacao em criarCotacaoDaReserva), depois recarrega a lista pra pegar o
+   contentVersionId novo (o endpoint devolve o Id, mas e' mais simples/seguro reusar o mesmo
+   recarregamento que ja formata tudo do mesmo jeito que o GET). */
+function sfGerarPdfContrato(contratoId, negocioId){
+  const contratos = state.sfContratosNegocio[negocioId] || [];
+  const c = contratos.find(x=>x.id===contratoId);
+  if(c) c.gerandoPdf = true;
+  render();
+  toast('Gerando PDF do contrato...');
+  sfApi(`/contratos/${contratoId}/gerar-pdf`, {method:'POST'})
+    .then(()=>{
+      toast('PDF do contrato gerado');
+      return sfRecarregarContratosNegocio(negocioId);
+    })
+    .catch(e=>{
+      if(c) c.gerandoPdf = false;
+      render();
+      toast('Nao foi possivel gerar o PDF do contrato: '+e.message);
+    });
+}
+/* avanca CA_StatusAssinatura__c um passo por vez (PATCH /contratos/{id}) - so' os 2 avancos que o
+   app expoe (Nao enviado -> Enviado para assinatura -> Assinado), nunca pula nem volta. Mesmo
+   padrao otimista+toast+revert de setLeadStatus. */
+const CONTRATO_PROXIMO_STATUS_ASSINATURA = {
+  'Não enviado':'Enviado para assinatura',
+  'Enviado para assinatura':'Assinado',
+};
+function sfAvancarStatusContrato(contratoId, negocioId){
+  const contratos = state.sfContratosNegocio[negocioId] || [];
+  const c = contratos.find(x=>x.id===contratoId);
+  if(!c) return;
+  /* CA_StatusAssinatura__c e' "Nao enviado" por default no picklist, mas esse default so' se
+     aplica quando o registro e' criado por um form da UI - contratos criados via Flow (como
+     CA_OportunidadeCriarContrato) podem vir com o campo null. Trata null como "Nao enviado"
+     (mesmo valor semantico que o proprio field-meta.xml documenta como default). */
+  const novoStatus = CONTRATO_PROXIMO_STATUS_ASSINATURA[c.statusAssinatura || 'Não enviado'];
+  if(!novoStatus) return;
+  const statusAnterior = c.statusAssinatura;
+  c.statusAssinatura = novoStatus;
+  c.atualizandoStatus = true;
+  render();
+  toast('Atualizando status de assinatura...');
+  sfApi(`/contratos/${contratoId}`, {method:'PATCH', body:JSON.stringify({status:novoStatus})})
+    .then(()=>{
+      toast('Status de assinatura atualizado para "'+novoStatus+'"');
+      return sfRecarregarContratosNegocio(negocioId);
+    })
+    .catch(e=>{
+      c.statusAssinatura = statusAnterior;
+      c.atualizandoStatus = false;
+      render();
+      toast('Nao foi possivel atualizar o status: '+e.message);
+    });
+}
+/* card de 1 Contract dentro da secao "Contrato" do Negocio - tipo/status, datas de
+   envio/assinatura (quando preenchidas) e as acoes disponiveis pro status atual. */
+function contratoCard(c, negocioId){
+  /* mesmo tratamento de null->'Nao enviado' de sfAvancarStatusContrato, so' pra exibicao aqui. */
+  const statusAssinatura = c.statusAssinatura || 'Não enviado';
+  return `
+    <div class="card" style="padding:14px;">
+      <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px; gap:8px;">
+        <span style="font-weight:700; font-size:13.5px;">${c.tipo || 'Contrato'}</span>
+        <span class="badge ${statusAssinatura==='Assinado'?'badge-available':'badge-blue'}">${statusAssinatura}</span>
+      </div>
+      ${(c.dataEnvioAssinatura || c.dataAssinatura) ? `
+        <div class="kv-table" style="margin-bottom:10px;">
+          ${c.dataEnvioAssinatura ? `<div class="kv-row"><span class="k">Enviado para assinatura</span><span class="v">${sfDataHora(c.dataEnvioAssinatura)}</span></div>` : ''}
+          ${c.dataAssinatura ? `<div class="kv-row"><span class="k">Assinado em</span><span class="v">${sfDataHora(c.dataAssinatura)}</span></div>` : ''}
+        </div>
+      ` : ''}
+      <div class="btn-row">
+        ${!c.contentVersionId
+          ? `<button class="btn btn-primary" style="width:auto; padding:7px 12px; font-size:12.5px;" ${c.gerandoPdf?'disabled':''} onclick="sfGerarPdfContrato('${c.id}','${negocioId}')">${c.gerandoPdf?'<span class="spinner"></span> Gerando...':'Gerar PDF do contrato'}</button>`
+          : `<button class="btn btn-secondary" style="width:auto; padding:7px 12px; font-size:12.5px;" onclick="sfAbrirPdf('${c.contentVersionId}')">Ver PDF do contrato</button>`}
+        ${statusAssinatura==='Não enviado'
+          ? `<button class="btn btn-secondary" style="width:auto; padding:7px 12px; font-size:12.5px;" ${c.atualizandoStatus?'disabled':''} onclick="sfAvancarStatusContrato('${c.id}','${negocioId}')">Enviar para assinatura</button>`
+          : statusAssinatura==='Enviado para assinatura'
+            ? `<button class="btn btn-secondary" style="width:auto; padding:7px 12px; font-size:12.5px;" ${c.atualizandoStatus?'disabled':''} onclick="sfAvancarStatusContrato('${c.id}','${negocioId}')">Marcar como assinado</button>`
+            : ''}
+      </div>
+    </div>
+  `;
+}
+/* secao "Contrato" do Negocio - substitui o texto estatico antigo (contratoStatus/
+   contratoStatusAssinatura, so leitura) por acao de verdade: gerar PDF, ver PDF, avancar
+   assinatura. undefined = ainda nao pediu (sfCarregarContratosNegocio dispara), null = buscando. */
+function negocioContratoSection(n){
+  const contratos = state.sfContratosNegocio[n.id];
+  return `
+    <div class="section-title" style="margin-top:0;">Contrato</div>
+    ${contratos == null
+      ? `<div class="sync-row" style="margin-bottom:18px;"><span class="spinner"></span> Carregando contrato...</div>`
+      : contratos.length
+        ? `<div class="stack" style="margin-bottom:18px;">${contratos.map(c=>contratoCard(c, n.id)).join('')}</div>`
+        : `<div style="margin-bottom:18px;">${emptyState('Nenhum contrato gerado ainda para esse negocio', I.contract)}</div>`}
+  `;
+}
 function screenNegociosList(){
   if(!state.sfNegociosLoaded) sfCarregarNegocios();
   const body = !state.sfNegociosLoaded
@@ -3207,6 +3391,7 @@ function negocioCard(n){
 }
 function screenNegocioDetail(id){
   sfCarregarNegocioDetalhe(id);
+  sfCarregarContratosNegocio(id);
   const n = negocioById(id);
   if(!n){
     return {title:'Negocio', back:true, body:`<div class="sync-row"><span class="spinner"></span> Carregando...</div>`};
@@ -3222,18 +3407,18 @@ function screenNegocioDetail(id){
       ${n.empreendimentoNome ? `<div class="muted" style="font-size:12.5px; margin-top:2px;">${n.empreendimentoNome} - Unidade ${negocioUnidadeCurta(n)}</div>` : ''}
     </div>
 
-    ${(n.valor || n.dataFechamento || n.casoCreditoStatus || n.casoJuridicoStatus || n.contratoStatus || n.contratoStatusAssinatura) ? `
+    ${(n.valor || n.dataFechamento || n.casoCreditoStatus || n.casoJuridicoStatus) ? `
       <div class="kv-table" style="margin-bottom:18px;">
         ${n.valor ? `<div class="kv-row"><span class="k">Valor</span><span class="v">${brl(n.valor)}</span></div>` : ''}
         ${n.dataFechamento ? `<div class="kv-row"><span class="k">Previsao de fechamento</span><span class="v">${fmtDataBR(String(n.dataFechamento).slice(0,10))}</span></div>` : ''}
         ${n.casoCreditoStatus ? `<div class="kv-row"><span class="k">Analise de credito</span><span class="v" style="font-family:inherit; font-weight:500;">${n.casoCreditoStatus}</span></div>` : ''}
         ${n.casoJuridicoStatus ? `<div class="kv-row"><span class="k">Juridico</span><span class="v" style="font-family:inherit; font-weight:500;">${n.casoJuridicoStatus}</span></div>` : ''}
-        ${n.contratoStatus ? `<div class="kv-row"><span class="k">Status do contrato</span><span class="v" style="font-family:inherit; font-weight:500;">${n.contratoStatus}</span></div>` : ''}
-        ${n.contratoStatusAssinatura ? `<div class="kv-row"><span class="k">Assinatura</span><span class="v" style="font-family:inherit; font-weight:500;">${n.contratoStatusAssinatura}</span></div>` : ''}
       </div>
     ` : ''}
 
-    <div class="section-title" style="margin-top:0;">Andamento</div>
+    ${negocioContratoSection(n)}
+
+    <div class="section-title">Andamento</div>
     <div class="timeline">
       ${linha.map(p=>`
         <div class="tl-item">
