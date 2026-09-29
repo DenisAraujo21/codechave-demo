@@ -521,6 +521,32 @@ async function sfCarregarLeads(){
   }
   render();
 }
+/* status do corretor logado na Roleta (Online/Offline/Ausente) - widget na Home, so aparece se
+   ele realmente estiver cadastrado como corretor de alguma fila (CA_RestRoletaStatus.doGet
+   devolve cadastrado:false senao, e a Home esconde o widget nesse caso). */
+async function sfCarregarRoletaStatus(){
+  try{
+    const info = await sfApi('/roleta-status');
+    state.sfRoletaCadastrado = !!info.cadastrado;
+    state.sfRoletaStatus = info.status || null;
+  }catch(e){
+    console.error('Nao foi possivel carregar o status da roleta', e);
+    state.sfRoletaCadastrado = false;
+  }
+  render();
+}
+function roletaStatusSet(novoStatus){
+  const statusAnterior = state.sfRoletaStatus;
+  state.sfRoletaStatus = novoStatus;
+  render();
+  sfApi('/roleta-status', {method:'PATCH', body:JSON.stringify({status:novoStatus})})
+    .then(()=>{ toast('Status na roleta: '+novoStatus); })
+    .catch(e=>{
+      state.sfRoletaStatus = statusAnterior;
+      render();
+      toast('Nao foi possivel atualizar o status: '+e.message);
+    });
+}
 /* contas reais com reserva/negocio em andamento (pedido do Denis) - substitui DB.clientes,
    igual ao padrao ja usado em leads/empreendimentos. */
 async function sfCarregarContas(){
@@ -1187,6 +1213,7 @@ const state = {
   sfNegociosLoaded:false, sfNegocioDetalhesCarregados:{},
   sfDetalhesCarregando:{}, sfCapaTentada:{}, sfFotoFalhou:{},
   sfComissoes:[], sfComissoesLoaded:false, sfComissoesError:null,
+  sfRoletaStatus:null, sfRoletaCadastrado:null,
   pdfModoSelecao:false, pdfSelecao:[], pdfGerando:false,
   buscaModo:false, buscaCarregandoTudo:false,
   buscaFiltros:{ bairro:'', precoMin:'', precoMax:'', suites:0, vagas:0, comodidades:[] },
@@ -1379,6 +1406,15 @@ function screenHome(){
         <span class="avatar-edit-badge">${I.camera}</span>
       </button>
     </div>
+
+    ${state.sfRoletaCadastrado? `
+      <div class="section-title" style="margin-top:18px;">Meu status na roleta</div>
+      <div class="chip-row" style="margin-bottom:4px;">
+        ${['Online','Ausente','Offline'].map(s=>`
+          <button class="chip ${state.sfRoletaStatus===s? 'active':''}" onclick="roletaStatusSet('${s}')">${s}</button>
+        `).join('')}
+      </div>
+    ` : ''}
 
     <div class="section-title" style="display:flex; align-items:center; justify-content:space-between; gap:8px;">
       <span style="display:flex; align-items:center; gap:7px;"><span class="live-dot"></span>Leads da roleta${roletaLeads.length? ` (${roletaLeads.length})` : ''}</span>
@@ -3953,6 +3989,7 @@ function finishWizard(viewDetail){
     sfCarregarEmpreendimentos();
     sfCarregarUsuario();
     sfCarregarLeads();
+    sfCarregarRoletaStatus();
     sfCarregarContas();
     sfCarregarReservas();
     sfCarregarNegocios();
