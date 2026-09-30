@@ -308,7 +308,8 @@
   .doc-camerabtn{width:32px; height:32px; border-radius:50%; border:1px solid var(--border); background:var(--surface); display:flex; align-items:center; justify-content:center; color:var(--accent); cursor:pointer; flex:0 0 auto;}
   .doc-camerabtn svg{width:15px; height:15px;}
   .doc-camerabtn:disabled{opacity:.5;}
-  .doc-chevron{display:inline-flex; transition:transform .18s ease;}
+  .doc-chevron{display:inline-flex; flex:0 0 auto; color:var(--text-muted); transition:transform .18s ease;}
+  .doc-chevron svg{width:16px; height:16px;}
   .list-card-chevron{display:inline-flex; flex:0 0 auto; color:var(--text-muted);}
   .list-card-chevron svg{width:16px; height:16px;}
   .doc-chevron.open{transform:rotate(90deg);}
