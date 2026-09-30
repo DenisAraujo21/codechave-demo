@@ -429,6 +429,9 @@ function sfMapEmpreendimentoInfo(e){
     totalUnidades:(e.unidadesVendidas||0)+(e.unidadesDisponiveis||0)+(e.unidadesReservadas||0),
     vendidoPct: e.disponibilidadePercentual!=null ? Math.round(100-e.disponibilidadePercentual) : 0,
     variant:1, descricao:'', comodidades:[], fotoUrl: e.fotoUrl || null,
+    /* Tipos de Venda habilitados - usado pelo wizard de Nova Reserva pra saber quais
+       Tipos oferecer (startWizard/wizardTipoVendaBody). */
+    tiposVendaHabilitados: e.tiposVendaHabilitados || [],
   };
 }
 /* fotoUrl real vem como caminho relativo do ContentVersion (ex: /sfc/servlet.shepherd/...) -
@@ -3546,6 +3549,12 @@ function visitaCard(v){
 /* ---------- WIZARD: Nova Reserva ---------- */
 function startWizard(unitId){
   const u = unitById(unitId);
+  const e = empById(u.empId);
+  /* Tipo de Venda: so mostra o passo quando o Empreendimento real tem mais de 1 Tipo
+     habilitado (CA_Empreendimento__c.CA_TiposVendaHabilitados__c) - com 0 ou 1 so' resolve direto
+     ("Financiamento Direto" e' o fallback de sempre, igual ao comportamento antigo), sem pedir pro
+     corretor escolher algo que nao tem escolha real. */
+  const tiposHabilitados = (u.real && e && e.tiposVendaHabilitados && e.tiposVendaHabilitados.length) ? e.tiposVendaHabilitados : [];
   state.mode = 'wizard';
   state.wizard = {
     step:1, unitId, empId:u.empId,
@@ -3553,7 +3562,9 @@ function startWizard(unitId){
     negociacaoEscolha: null,
     novoClienteMode:false,
     pagamentos:[],
-    tabelaId:null, seriesEditor:null,
+    tabelaId:null, seriesEditor:null, tabelaOficialAberta:false,
+    tiposVendaHabilitados: tiposHabilitados,
+    tipoVenda: tiposHabilitados.length>1 ? null : (tiposHabilitados[0] || 'Financiamento Direto'),
     motivo:'',
     obs:'',
     aceite:false,
@@ -3568,7 +3579,7 @@ function startWizard(unitId){
 function wizardBack(){
   const w = state.wizard;
   if(w.novoClienteMode){ w.novoClienteMode=false; render({resetScroll:true}); return; }
-  if(w.erro){ w.erro = null; w.step = 3; render({resetScroll:true}); return; }
+  if(w.erro){ w.erro = null; w.step = 4; render({resetScroll:true}); return; }
   if(w.step>1){ w.step--; render({resetScroll:true}); return; }
   state.mode='tabs'; state.wizard=null; render({resetScroll:true});
 }
@@ -3653,7 +3664,7 @@ function wizardSetObs(v){ state.wizard.obs = v; }
    porque wizardSetObs ja guardou em state.wizard.obs a cada tecla */
 function wizardSetMotivo(v){ state.wizard.motivo = v; render(); }
 /* volta da tela de erro (passo 4) pra revisao, mantendo tudo que o corretor ja preencheu */
-function wizardTentarDeNovo(){ state.wizard.erro = null; wizardGoto(3); }
+function wizardTentarDeNovo(){ state.wizard.erro = null; wizardGoto(4); }
 /* valores reais do picklist restrito CA_Reserva__c.CA_QualMotivoEscolheuUnidadeWERT__c - antes
    o app mandava sempre 'Outros' fixo, sem perguntar ao corretor. */
 const MOTIVOS_RESERVA = ['Preço','Localização','Forma de Pagamento','Qualidade dos Imóveis','Outros'];
@@ -3698,6 +3709,40 @@ async function sfCarregarTabelasVendas(empId){
   }
   render();
 }
+/* ---------- WIZARD passo 2 (real): Tipo de Venda ----------
+   Antes da escolha de Tabela - o corretor escolhe como o cliente vai pagar (À Vista/Financiamento
+   Direto/Financiamento Bancário (SFH)/Associativo), dentro do que o Empreendimento da unidade tem
+   habilitado (CA_Empreendimento__c.CA_TiposVendaHabilitados__c). Grava em state.wizard.tipoVenda -
+   usado tanto pra filtrar as Tabelas (tabelaPickerBody) quanto pra popular CA_Reserva__c.
+   CA_TipoVenda__c no POST /reservas (confirmarReserva), que por sua vez decide o RecordType da
+   Oportunidade criada. */
+const TIPO_VENDA_DESCRICOES = {
+  'À Vista': 'Pagamento integral, sem parcelamento pela construtora.',
+  'Financiamento Direto': 'Parcelamento direto com a construtora (padrão).',
+  'Financiamento Bancário (SFH)': 'Financiamento bancário (SFH) - parcelas cuidadas pelo banco.',
+  'Associativo': 'Repasse associativo.',
+};
+function wizardSelecionarTipoVenda(tipo){
+  state.wizard.tipoVenda = tipo;
+  wizardGoto(3);
+}
+function wizardTipoVendaBody(tipos){
+  return `
+    <div class="section-title" style="margin-top:0;">Como o cliente vai pagar?</div>
+    <div class="stack">
+      ${tipos.map(t=>`
+        <button class="list-card" onclick="wizardSelecionarTipoVenda('${t}')">
+          <div class="ic-badge" style="width:34px; height:34px; border-radius:9px; background:var(--surface-2); display:flex; align-items:center; justify-content:center; color:var(--accent); flex:0 0 auto;">${I.calendar}</div>
+          <div style="flex:1; min-width:0;">
+            <div style="font-weight:600; font-size:13.5px;">${t}</div>
+            <div class="muted" style="font-size:11.5px;">${TIPO_VENDA_DESCRICOES[t]||''}</div>
+          </div>
+          <span class="list-card-chevron">${I.chevron}</span>
+        </button>
+      `).join('')}
+    </div>
+  `;
+}
 /* monta as linhas editaveis da serie a partir da composicao padrao da tabela - o valor de cada
    parcela vem do PRECO REAL da unidade (nao da tabela em si, que so' presta a estrutura/%). */
 function wizardSelecionarTabela(tabelaId){
@@ -3711,11 +3756,20 @@ function wizardSelecionarTabela(tabelaId){
     quantidade: s.quantidade||1,
     valor: Math.round((unitById(w.unitId).valor * (s.percentual||0) / 100 / (s.quantidade||1)) * 100) / 100,
   }));
+  /* a secao "Tabela de Vendas" oficial (read-only, pedido do Denis) comeca sempre recolhida - a
+     tela e' mobile e o foco principal e' editar a proposta embaixo, nao conferir linha a linha
+     a composicao oficial (isso fica disponivel por baixo de um toggle, ver wizardToggleTabelaOficial). */
+  w.tabelaOficialAberta = false;
   render();
 }
 function wizardTrocarTabela(){
   state.wizard.tabelaId = null;
   state.wizard.seriesEditor = null;
+  state.wizard.tabelaOficialAberta = false;
+  render();
+}
+function wizardToggleTabelaOficial(){
+  state.wizard.tabelaOficialAberta = !state.wizard.tabelaOficialAberta;
   render();
 }
 function wizardSerieEditorInput(idx, campo, valorStr){
@@ -3724,8 +3778,68 @@ function wizardSerieEditorInput(idx, campo, valorStr){
   linha[campo] = Math.max(0, Number(valorStr)||0);
   render();
 }
+/* Proposta do Proponente: o corretor pode remover uma linha da proposta (ex: tirou uma parcela
+   que a tabela previa) ou incluir uma linha nova a partir de uma das series definidas na
+   composicao oficial da tabela (catalogoId sempre vem de uma serie real, nao inventa um tipo
+   novo - CA_RestReservas/ReservasService esperam um catalogoId valido em seriesAjustadas). A
+   linha nova comeca com quantidade 1 / valor 0 pro corretor preencher. */
+function wizardAddSerieEditor(){
+  const w = state.wizard;
+  const tabela = (state.sfTabelasVendasCache[w.empId]||[]).find(t=>t.id===w.tabelaId);
+  if(!tabela || !tabela.series.length) return;
+  const sel = document.getElementById('wz-nova-serie');
+  const catalogoId = sel ? sel.value : tabela.series[0].catalogoId;
+  const origem = tabela.series.find(s=>s.catalogoId===catalogoId) || tabela.series[0];
+  w.seriesEditor.push({catalogoId: origem.catalogoId, nome: origem.nome, percentual: origem.percentual, ordem: origem.ordem||0, quantidade:1, valor:0});
+  render();
+}
+function wizardRemoveSerieEditor(idx){
+  const w = state.wizard;
+  if(!w.seriesEditor || w.seriesEditor.length<=1){ toast('A proposta precisa ter pelo menos uma serie'); return; }
+  w.seriesEditor.splice(idx,1);
+  render();
+}
 function wizardSerieAlocado(){
   return (state.wizard.seriesEditor||[]).reduce((s,l)=>s+(l.quantidade*l.valor),0);
+}
+/* o corretor precisa poder montar uma proposta personalizada, que diverge de proposito do valor
+   de tabela - e' exatamente essa divergencia que aciona (ou nao) a alcada de aprovacao do Gerente
+   Comercial. Antes disso travava em bater EXATAMENTE o valor da unidade, o que tornava a
+   divergencia impossivel de criar pela UI. Agora so' uma trava de sanidade bem mais solta: soma
+   tem que ser maior que zero, e nenhuma linha com valor pode ter quantidade zero (linha "fantasma"). */
+function wizardSerieSanidadeOk(){
+  const linhas = state.wizard.seriesEditor||[];
+  if(!linhas.length) return false;
+  const total = wizardSerieAlocado();
+  if(total <= 0) return false;
+  for(const l of linhas){
+    if((l.valor||0) > 0 && (!l.quantidade || l.quantidade <= 0)) return false;
+  }
+  return true;
+}
+/* Diferenca Tabela x Proposta - preview client-side calculado com a MESMA formula que o Apex usa
+   (ReservasService.criarFluxoPagamentoDaTabela): valor da unidade x percentual ORIGINAL da tabela
+   (a composicao oficial, tabela.series), comparado contra o que o corretor efetivamente montou
+   (seriesEditor). O numero OFICIAL de verdade continua sendo calculado so' no Apex. */
+function calcularDiferencaTabelaProposta(u, tabela, seriesEditor){
+  const totalTabela = tabela.series.reduce((s,x)=> s + (u.valor * (x.percentual||0) / 100), 0);
+  const totalProposta = (seriesEditor||[]).reduce((s,l)=>s+(l.quantidade*l.valor),0);
+  const diferenca = totalProposta - totalTabela;
+  const diferencaPerc = totalTabela>0 ? (diferenca/totalTabela*100) : 0;
+  return {totalTabela, totalProposta, diferenca, diferencaPerc};
+}
+/* markup do bloco "Tabela x Proposta" (kv-table + alerta de alcada quando diferenca>10%). */
+function diferencaTabelaPropostaBody(u, tabela, seriesEditor){
+  const {totalTabela, totalProposta, diferenca, diferencaPerc} = calcularDiferencaTabelaProposta(u, tabela, seriesEditor);
+  const diffColor = diferenca>0 ? 'var(--status-reserved)' : diferenca<0 ? 'var(--status-sold)' : 'var(--status-available)';
+  return `
+    <div class="kv-table" style="margin-bottom:14px;">
+      <div class="kv-row"><span class="k">Total da Tabela</span><span class="v">${brl(totalTabela)}</span></div>
+      <div class="kv-row"><span class="k">Total da Proposta</span><span class="v">${brl(totalProposta)}</span></div>
+      <div class="kv-row"><span class="k">Diferença</span><span class="v" style="color:${diffColor};">${brl(diferenca)} (${diferencaPerc.toFixed(1)}%)</span></div>
+    </div>
+    ${Math.abs(diferencaPerc)>10 ? `<div class="alert-card warn" style="margin-bottom:14px;">${I.alert}<div><b>Acima da alçada do corretor</b><div class="muted" style="font-size:12px; margin-top:2px;">Diferença maior que 10% - vai para aprovação do Gerente Comercial antes de virar a Cotação oficial.</div></div></div>` : ''}
+  `;
 }
 /* markup do fluxo manual antigo (Tipo/Valor/Parcelas/Periodicidade em texto livre) - extraido
    pra uma funcao pra poder ser reaproveitado tanto pelo mock quanto por um empreendimento real
@@ -3779,7 +3893,7 @@ function manualSerieBody(u, w){
     <button class="btn btn-secondary" onclick="wizardAddPagamento()">${I.plus} Adicionar a serie</button>
 
     <div class="btn-row" style="margin-top:18px;">
-      <button class="btn btn-primary" ${saldo!==0?'disabled':''} onclick="wizardGoto(3)">Continuar</button>
+      <button class="btn btn-primary" ${saldo!==0?'disabled':''} onclick="wizardGoto(4)">Continuar</button>
     </div>
     ${saldo!==0? `<p class="muted" style="font-size:11.5px; text-align:center; margin-top:8px;">A serie precisa somar exatamente o valor do imovel para continuar.</p>` : ''}
   `;
@@ -3806,13 +3920,18 @@ function tabelaPickerBody(tabelas){
 /* serie de pagamentos real, editavel - valor de cada parcela ja vem calculado a partir do
    PRECO REAL da unidade (percentual da tabela x valor / quantidade, mesma formula do LWC real),
    o corretor so' ajusta se quiser mudar quantidade/valor de alguma serie (ex: menos parcelas,
-   entrada maior). Precisa fechar exatamente no valor da unidade pra liberar o Continuar. */
+   entrada maior). Nao precisa mais fechar exatamente no valor da unidade (ver wizardSerieSanidadeOk) -
+   a proposta pode divergir da tabela de proposito, e' isso que aciona (ou nao) a alcada de aprovacao.
+   Layout (pedido do Denis, com prints do padrao de outro cliente "Parcelamento e Comissionamento"):
+   DUAS tabelas na mesma tela - "Tabela de Vendas" oficial/travada (composicao original, tabela.series)
+   comecando recolhida (tela e' mobile, foco principal e' editar a proposta embaixo), e "Proposta do
+   Proponente" editavel (w.seriesEditor) - com a Diferenca entre as duas visivel ao vivo, sem
+   precisar ir pra tela de Revisao pra ver. */
 function serieEditorBody(u, w){
   const alocado = wizardSerieAlocado();
-  const saldo = Math.round((u.valor - alocado)*100)/100;
-  const balanceado = Math.abs(saldo) < 0.01;
-  const saldoColor = balanceado ? 'var(--status-available)' : saldo>0 ? 'var(--status-reserved)' : 'var(--status-sold)';
-  const saldoLabel = balanceado ? 'Serie completa' : saldo>0 ? 'Falta alocar' : 'Excede o valor em';
+  const sanidadeOk = wizardSerieSanidadeOk();
+  const tabela = (state.sfTabelasVendasCache[w.empId]||[]).find(t=>t.id===w.tabelaId);
+  const aberta = !!w.tabelaOficialAberta;
   return `
     <div class="price-hero" style="margin-top:0;">
       <div class="label">Valor do imovel</div>
@@ -3821,18 +3940,43 @@ function serieEditorBody(u, w){
 
     <button class="btn-ghost" style="font-size:12px; padding:6px 2px; margin-bottom:4px;" onclick="wizardTrocarTabela()">&larr; Trocar tabela de vendas</button>
 
-    <div class="kv-table" style="margin-bottom:16px;">
-      <div class="kv-row"><span class="k">Ja alocado</span><span class="v">${brl(alocado)}</span></div>
-      <div class="kv-row"><span class="k">${saldoLabel}</span><span class="v" style="color:${saldoColor};">${brl(Math.abs(saldo))}</span></div>
-    </div>
+    ${tabela ? `
+      <div class="section-title" style="margin-top:0; display:flex; align-items:center; justify-content:space-between; cursor:pointer; user-select:none;" onclick="wizardToggleTabelaOficial()">
+        <span>${tabela.name || 'Tabela de Vendas'} (oficial)</span>
+        <span class="doc-chevron${aberta?' open':''}">${I.chevron}</span>
+      </div>
+      ${aberta ? `
+        <div class="stack" style="margin-bottom:14px;">
+          ${tabela.series.map(s=>{
+            const valorUnit = Math.round((u.valor * (s.percentual||0) / 100 / (s.quantidade||1)) * 100) / 100;
+            const totalSerie = u.valor * (s.percentual||0) / 100;
+            return `
+            <div class="list-card" style="cursor:default; flex-direction:column; align-items:stretch;">
+              <div style="display:flex; justify-content:space-between; align-items:baseline; margin-bottom:4px;">
+                <div style="font-weight:600; font-size:13.5px;">${s.nome}</div>
+                <div class="mono muted" style="font-size:11.5px;">${s.percentual}%</div>
+              </div>
+              <div class="muted" style="font-size:11.5px;">${s.quantidade>1?s.quantidade+'x de '+brl(valorUnit):'1x de '+brl(valorUnit)}</div>
+              <div class="muted" style="font-size:11.5px; text-align:right; margin-top:2px;">Total da serie: ${brl(totalSerie)}</div>
+            </div>
+          `;}).join('')}
+        </div>
+      ` : `<p class="muted" style="font-size:11.5px; margin:-2px 0 14px;">Toque para conferir os valores oficiais linha a linha - estes valores sao travados, nao editaveis.</p>`}
 
-    <div class="section-title" style="margin-top:0;">Series</div>
-    <div class="stack" style="margin-bottom:18px;">
+      <div class="section-title">Diferença</div>
+      ${diferencaTabelaPropostaBody(u, tabela, w.seriesEditor)}
+    ` : ''}
+
+    <div class="section-title" style="margin-top:0;">Proposta do Proponente</div>
+    <div class="stack" style="margin-bottom:10px;">
       ${w.seriesEditor.map((s,idx)=>`
         <div class="list-card" style="cursor:default; flex-direction:column; align-items:stretch;">
           <div style="display:flex; justify-content:space-between; align-items:baseline; margin-bottom:8px;">
             <div style="font-weight:600; font-size:13.5px;">${s.nome}</div>
-            <div class="mono muted" style="font-size:11.5px;">${s.percentual}%</div>
+            <div style="display:flex; align-items:center; gap:8px;">
+              <div class="mono muted" style="font-size:11.5px;">${s.percentual}%</div>
+              <button class="list-remove" onclick="wizardRemoveSerieEditor(${idx})" aria-label="Remover serie">${I.close}</button>
+            </div>
           </div>
           <div class="field-row">
             <div class="field"><label>Parcelas</label><input type="number" min="1" value="${s.quantidade}" onchange="wizardSerieEditorInput(${idx},'quantidade',this.value)"></div>
@@ -3842,11 +3986,23 @@ function serieEditorBody(u, w){
         </div>
       `).join('')}
     </div>
+    ${tabela ? `
+      <div class="field-row" style="align-items:flex-end; margin-bottom:18px;">
+        <div class="field" style="flex:1;"><label for="wz-nova-serie">Nova serie</label>
+          <select id="wz-nova-serie">${tabela.series.map(s=>`<option value="${s.catalogoId}">${s.nome} (${s.percentual}%)</option>`).join('')}</select>
+        </div>
+        <button class="btn btn-secondary" onclick="wizardAddSerieEditor()">${I.plus} Adicionar serie...</button>
+      </div>
+    ` : ''}
 
-    <div class="btn-row" style="margin-top:18px;">
-      <button class="btn btn-primary" ${!balanceado?'disabled':''} onclick="wizardGoto(3)">Continuar</button>
+    <div class="kv-table" style="margin-bottom:16px;">
+      <div class="kv-row"><span class="k">Total da proposta</span><span class="v">${brl(alocado)}</span></div>
     </div>
-    ${!balanceado? `<p class="muted" style="font-size:11.5px; text-align:center; margin-top:8px;">A serie precisa somar exatamente o valor do imovel para continuar.</p>` : ''}
+
+    <div class="btn-row" style="margin-top:4px;">
+      <button class="btn btn-primary" ${!sanidadeOk?'disabled':''} onclick="wizardGoto(4)">Continuar</button>
+    </div>
+    ${!sanidadeOk? `<p class="muted" style="font-size:11.5px; text-align:center; margin-top:8px;">A soma da serie precisa ser maior que zero, e toda linha com valor precisa ter ao menos 1 parcela.</p>` : `<p class="muted" style="font-size:11.5px; text-align:center; margin-top:8px;">Voce pode montar uma proposta diferente da tabela - se a diferenca passar de 10%, vai para aprovacao do Gerente Comercial.</p>`}
   `;
 }
 function wizardAddPagamento(){
@@ -3880,7 +4036,7 @@ function confirmarReserva(){
     const protocolo = 'RES-2026-'+(10000+Number(seq)).toString().slice(-5);
     DB.reservas.unshift({id, protocolo, clienteId:w.clienteId, unitId:w.unitId, empId:w.empId, valor, pagamentos:w.pagamentos, status:'Em analise', data:hojeBR()});
     u.status = 'reservada';
-    w.step = 4; w.protocolo = protocolo; w.createdId = id; w.syncing = true;
+    w.step = 5; w.protocolo = protocolo; w.createdId = id; w.syncing = true;
     render({resetScroll:true});
     setTimeout(()=>{ if(state.wizard){ state.wizard.syncing=false; render(); } }, 1400);
     return;
@@ -3907,6 +4063,7 @@ function confirmarReserva(){
   const body = {
     unidadeId: w.unitId, clienteId: w.clienteId,
     motivo: w.motivo, media: 'Site', observacoes: w.obs || '',
+    tipoVenda: w.tipoVenda || null,
   };
   /* corretor escolheu continuar na reserva/negociacao que o cliente ja tem em andamento (ver
      aviso em wizardVerificarReservaAberta) em vez de abrir uma Oportunidade nova e separada. */
@@ -3928,7 +4085,11 @@ function confirmarReserva(){
         : [];
       DB.reservas.unshift({id, protocolo:id, clienteId:w.clienteId, unitId:w.unitId, empId:w.empId, valor, pagamentos:w.pagamentos||[], series:seriesRecemCriadas, status:'Em analise', data:hojeBR(), real:true, temCotacao:false});
       u.status = 'reservada';
-      w.confirmando = false; w.step = 4; w.protocolo = id; w.createdId = id; w.syncing = false; w.negociacaoId = res.negociacaoId;
+      w.confirmando = false; w.step = 5; w.protocolo = id; w.createdId = id; w.syncing = false; w.negociacaoId = res.negociacaoId;
+      /* Diferenca oficial Tabela x Proposta (Parte 3.3) - so' vem preenchida quando a Reserva usou
+         uma Tabela de Vendas real (ver CA_RestReservas.doPost/ReservasService.criarFluxoPagamentoDaTabela). */
+      w.tabelaNominal = res.tabelaNominal; w.propostaNominal = res.propostaNominal;
+      w.diferencaNominal = res.diferencaNominal; w.diferencaNominalPerc = res.diferencaNominalPerc;
       render({resetScroll:true});
       toast('Reserva e Oportunidade criadas no Salesforce');
     })
@@ -3937,7 +4098,7 @@ function confirmarReserva(){
          ve a mensagem do Salesforce e volta pra revisao com tudo preenchido */
       w.confirmando = false;
       w.erro = e.message || 'Erro desconhecido';
-      w.step = 4;
+      w.step = 5;
       render({resetScroll:true});
     });
 }
@@ -3945,8 +4106,8 @@ function confirmarReserva(){
 function renderWizard(){
   const w = state.wizard;
   const u = unitById(w.unitId), e = empById(w.empId);
-  const titles = ['Selecionar conta','Serie de pagamentos','Revisao da reserva','Reserva confirmada'];
-  const progress = `<div class="wizard-progress">${[1,2,3,4].map(n=>`<i class="${w.step>=n?'on':''}"></i>`).join('')}</div>`;
+  const titles = ['Selecionar conta','Tipo de venda','Serie de pagamentos','Revisao da reserva','Reserva confirmada'];
+  const progress = `<div class="wizard-progress">${[1,2,3,4,5].map(n=>`<i class="${w.step>=n?'on':''}"></i>`).join('')}</div>`;
 
   let body='';
   if(w.step===1){
@@ -4034,12 +4195,21 @@ function renderWizard(){
       `;
     }
   } else if(w.step===2){
+    /* Tipo de Venda - so' pergunta quando existe mais de 1 Tipo habilitado pro Empreendimento
+       real desta unidade; startWizard ja resolveu w.tipoVenda direto quando so' havia 0 ou 1
+       opcao (mock, ou Empreendimento sem habilitacao configurada ainda). */
+    body = wizardTipoVendaBody(w.tiposVendaHabilitados.length ? w.tiposVendaHabilitados : ['Financiamento Direto']);
+  } else if(w.step===3){
     /* empreendimento real com Tabela de Vendas aprovada -> fluxo real (tabela+serie de verdade,
        gera CA_FluxoPagamento__c/SerieFluxoPagamento__c). Sem nenhuma Tabela aprovada (ou unidade
        mock) -> fluxo manual de sempre, sem mudanca. */
     if(u.real){
       sfCarregarTabelasVendas(u.empId);
-      const tabelas = state.sfTabelasVendasCache[u.empId];
+      const todasTabelas = state.sfTabelasVendasCache[u.empId];
+      /* filtra pelo Tipo de Venda escolhido no passo anterior - uma tabela sem CA_TipoVenda__c
+         marcado (legado, ainda nao classificada) continua aparecendo em qualquer Tipo, pra nao
+         criar um beco sem saida por falta de dado cadastrado. */
+      const tabelas = todasTabelas ? todasTabelas.filter(t=>!t.tipoVenda || t.tipoVenda===w.tipoVenda) : todasTabelas;
       if(tabelas === null || tabelas === undefined){
         body = `<div class="sync-row" style="margin-top:18px;"><span class="spinner"></span> Carregando tabelas de vendas...</div>`;
       } else if(!tabelas.length){
@@ -4052,7 +4222,7 @@ function renderWizard(){
     } else {
       body = manualSerieBody(u, w);
     }
-  } else if(w.step===3){
+  } else if(w.step===4){
     const c = clienteById(w.clienteId);
     const usaTabela = w.tabelaId && w.seriesEditor && w.seriesEditor.length;
     const alocado = usaTabela ? wizardSerieAlocado() : pagamentoAlocado(w.pagamentos);
@@ -4070,6 +4240,21 @@ function renderWizard(){
       }
     } else {
       ({enviados, total} = docsResumo(c));
+    }
+    /* Diferenca Tabela x Proposta (Parte 3.3) - mesma formula/markup do passo 3 (Tabela & Serie),
+       reaproveitando calcularDiferencaTabelaProposta/diferencaTabelaPropostaBody pra nao duplicar.
+       Aqui e' so' a confirmacao final antes de criar a Reserva - o corretor ja viu esse mesmo
+       numero ao vivo enquanto montava a proposta. O numero oficial (calculado so' no Apex) e'
+       mostrado de novo na tela de confirmacao, a partir da resposta do POST /reservas. */
+    let diffBody = '';
+    if(usaTabela){
+      const tabelaEscolhida = (state.sfTabelasVendasCache[w.empId]||[]).find(t=>t.id===w.tabelaId);
+      if(tabelaEscolhida){
+        diffBody = `
+          <div class="section-title">Tabela x Proposta</div>
+          ${diferencaTabelaPropostaBody(u, tabelaEscolhida, w.seriesEditor)}
+        `;
+      }
     }
     body = `
       <div class="section-title" style="margin-top:0;">Conta</div>
@@ -4115,6 +4300,8 @@ function renderWizard(){
         <div class="kv-row"><span class="k">Total da serie</span><span class="v">${brl(alocado)}</span></div>
       </div>
 
+      ${diffBody}
+
       <div class="field" style="margin-top:16px;"><label for="wz-motivo">Motivo da escolha da unidade</label>
         <select id="wz-motivo" onchange="wizardSetMotivo(this.value)">
           <option value="" ${!w.motivo?'selected':''} disabled>Selecione o motivo</option>
@@ -4137,6 +4324,13 @@ function renderWizard(){
       <button class="btn btn-secondary" onclick="wizardTentarDeNovo()">Voltar e tentar de novo</button>
     `;
   } else {
+    /* Diferenca Tabela x Proposta OFICIAL (Parte 3.3) - vem da resposta do POST /reservas
+       (tabelaNominal/propostaNominal/diferencaNominal/diferencaNominalPerc), calculada so' no
+       Apex (ReservasService.criarFluxoPagamentoDaTabela) - espelha exatamente o que foi gravado no
+       Fluxo de Pagamento, sem reinventar a formula aqui. So' aparece quando a Reserva usou uma
+       Tabela de Vendas real. */
+    const temDiferencaOficial = w.tabelaNominal!==undefined && w.tabelaNominal!==null;
+    const diffOficialColor = (w.diferencaNominal||0)>0 ? 'var(--status-reserved)' : (w.diferencaNominal||0)<0 ? 'var(--status-sold)' : 'var(--status-available)';
     body = `
       <div class="success-badge">${I.check}</div>
       <h2 style="text-align:center; margin:0 0 4px; font-size:18px;">Reserva confirmada</h2>
@@ -4144,6 +4338,14 @@ function renderWizard(){
       ${w.syncing
         ? `<div class="sync-row"><span class="spinner"></span> Sincronizando com Salesforce...</div>`
         : `<div class="sync-row" style="color:var(--status-available);">${I.check} Sincronizado com o Salesforce</div>`}
+      ${temDiferencaOficial ? `
+        <div class="section-title">Tabela x Proposta (oficial)</div>
+        <div class="kv-table" style="margin-bottom:6px;">
+          <div class="kv-row"><span class="k">Total da Tabela</span><span class="v">${brl(w.tabelaNominal)}</span></div>
+          <div class="kv-row"><span class="k">Total da Proposta</span><span class="v">${brl(w.propostaNominal)}</span></div>
+          <div class="kv-row"><span class="k">Diferença</span><span class="v" style="color:${diffOficialColor};">${brl(w.diferencaNominal)} (${(w.diferencaNominalPerc||0).toFixed(1)}%)</span></div>
+        </div>
+      ` : ''}
       <div class="btn-row" style="margin-top:26px;">
         <button class="btn btn-secondary" onclick="finishWizard(true)">Ver reserva</button>
         <button class="btn btn-primary" onclick="finishWizard(false)">Concluir</button>
@@ -4151,7 +4353,7 @@ function renderWizard(){
     `;
   }
 
-  return {title: (w.step===4 && w.erro) ? 'Reserva nao criada' : titles[w.step-1], back:true, body: progress + body};
+  return {title: (w.step===5 && w.erro) ? 'Reserva nao criada' : titles[w.step-1], back:true, body: progress + body};
 }
 function finishWizard(viewDetail){
   const w = state.wizard;
