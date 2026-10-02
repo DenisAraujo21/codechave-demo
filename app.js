@@ -679,43 +679,6 @@ async function sfCarregarDocumentos(contaId){
   }
   render();
 }
-/* dispara o seletor de arquivo (camera ou galeria) pro tipo de documento clicado */
-function iniciarUploadDocumento(clienteId, tipoDocumento){
-  state.docUploadTarget = {clienteId, tipoDocumento};
-  document.getElementById('doc-upload-input').click();
-}
-function handleDocUploadChange(ev){
-  const file = ev.target.files && ev.target.files[0];
-  const target = state.docUploadTarget;
-  ev.target.value = '';
-  if(!file || !target) return;
-  const {clienteId, tipoDocumento} = target;
-  const key = `${clienteId}_${tipoDocumento}`;
-  const reader = new FileReader();
-  reader.onload = () => {
-    state.sfDocUploading[key] = true;
-    render();
-    sfApi('/documentos', {method:'POST', body: JSON.stringify({
-      contaId: clienteId, tipoDocumento, fileName: file.name, base64Data: reader.result,
-    })}).then(res=>{
-      state.sfDocUploading[key] = false;
-      const c = clienteById(clienteId);
-      const d = c && c.documentosReais && c.documentosReais.find(x=>x.tipoDocumento===tipoDocumento);
-      if(d){
-        Object.assign(d, {hasFile:true, status:'uploaded', statusLabel:res.status, confianca:res.confidence,
-          contentDocumentId:res.contentDocumentId, fileName:file.name, campos:res.campos||[], titularidade:res.titularidade||null,
-          expandido:true});
-      }
-      render();
-      toast(res.status==='Verde' ? 'Documento enviado e processado' : 'Documento enviado - revisao necessaria');
-    }).catch(e=>{
-      state.sfDocUploading[key] = false;
-      render();
-      toast('Nao foi possivel enviar o documento: '+e.message);
-    });
-  };
-  reader.readAsDataURL(file);
-}
 /* documentos ja enviados numa sessao anterior nao trazem os campos extraidos no checklist -
    busca sob demanda (usa o cache do IDP no Salesforce, sem reprocessar) so quando o corretor
    pede pra ver os dados. */
@@ -775,27 +738,6 @@ function toggleDocumentoExpandido(clienteId, tipoDocumento){
   if(d.campos){ d.expandido = true; render(); return; }
   sfVerDadosDocumento(clienteId, tipoDocumento, d.contentDocumentId);
 }
-/* remove o documento da conta (e o resultado do IDP junto) - o corretor pode trocar de ideia
-   sobre qual arquivo anexou sem precisar sobrescrever; a linha volta pro estado "pendente". */
-function excluirDocumentoReal(clienteId, tipoDocumento, contentDocumentId){
-  const c = clienteById(clienteId);
-  const d = c && c.documentosReais && c.documentosReais.find(x=>x.tipoDocumento===tipoDocumento);
-  if(!d) return;
-  const key = `${clienteId}_${tipoDocumento}`;
-  state.sfDocExcluindo[key] = true;
-  render();
-  sfApi(`/documentos/${contentDocumentId}`, {method:'DELETE'}).then(()=>{
-    state.sfDocExcluindo[key] = false;
-    Object.assign(d, {hasFile:false, status:'empty', statusLabel:null, confianca:null, processadoEm:null,
-      contentDocumentId:null, fileName:null, campos:null, titularidade:null, expandido:false});
-    render();
-    toast('Documento removido');
-  }).catch(e=>{
-    state.sfDocExcluindo[key] = false;
-    render();
-    toast('Nao foi possivel remover o documento: '+e.message);
-  });
-}
 /* aplica os campos extraidos na conta - o corretor revisa na tela e confirma; se nao houver
    mapeamento pro tipo de documento (ex: Comprovante de Renda), o Salesforce so avisa, sem erro. */
 function aplicarDocumento(clienteId, tipoDocumento){
@@ -827,6 +769,7 @@ async function sfCarregarReservas(){
       temCotacao: !!r.temCotacao, documentacaoEmAnalise: !!r.documentacaoEmAnalise,
       aprovadoIncorporadora: !!r.aprovadoIncorporadora, contratoAssinado: !!r.contratoAssinado, real: true,
       negociacaoId: r.negociacaoId || null, negociacaoStageName: r.negociacaoStageName || null,
+      aprovacao: r.aprovacao || null,
     }));
   }catch(e){
     console.error('Nao foi possivel carregar as reservas', e);
@@ -912,156 +855,6 @@ function toggleDocumento(clienteId, tipo){
   if(doc) doc.status = doc.status==='enviado' ? 'pendente' : 'enviado';
   render();
 }
-/* selo compacto (ex: "2/4 docs") pra usar em listas - verde quando completo, ambar quando falta algo.
-   Conta real so mostra o selo depois que a checklist real ja foi carregada (evita contar mock). */
-function docsBadgeMini(cliente){
-  if(cliente.real){
-    if(!cliente.documentosReais) return '';
-    const obrig = cliente.documentosReais.filter(d=>d.obrigatorio);
-    const enviados = obrig.filter(d=>d.hasFile).length;
-    const cls = enviados===obrig.length ? 'badge-available' : 'badge-reserved';
-    return `<span class="badge ${cls}" style="font-size:10px; padding:3px 7px;">${enviados}/${obrig.length} docs</span>`;
-  }
-  const {enviados, total} = docsResumo(cliente);
-  const cls = enviados===total ? 'badge-available' : 'badge-reserved';
-  return `<span class="badge ${cls}" style="font-size:10px; padding:3px 7px;">${enviados}/${total} docs</span>`;
-}
-/* checklist completo (usado na Conta e no passo 1 do assistente de Nova Reserva). Conta real usa
-   os documentos de verdade (CA_TipoDocumentoIDP__mdt via CA_RestDocumentos), com upload real
-   (camera/galeria), extracao simulada (IDP) e aplicacao dos campos na conta; conta mock mantem
-   o toggle antigo, sem tocar em Salesforce. */
-function documentosChecklist(cliente){
-  if(cliente.real) return documentosChecklistReal(cliente);
-  const {docs, enviados, total} = docsResumo(cliente);
-  return `
-    <div class="section-title" style="display:flex; align-items:center; justify-content:space-between; gap:8px;">
-      <span>Documentos</span>
-      <span class="muted" style="font-size:12px; font-weight:600;">${enviados}/${total} enviados</span>
-    </div>
-    <div class="stack" style="margin-bottom:6px;">
-      ${docs.map(d=>`
-        <div class="list-card" style="cursor:default;">
-          <div style="flex:1; min-width:0;">
-            <div style="font-weight:600; font-size:13.5px;">${d.tipo}</div>
-            <div class="muted" style="font-size:11.5px;">${d.status==='enviado'?'Documento enviado':'Aguardando envio'}</div>
-          </div>
-          <div style="display:flex; align-items:center; gap:8px; flex:0 0 auto;">
-            <span class="badge ${d.status==='enviado'?'badge-available':'badge-reserved'}">${d.status==='enviado'?'Enviado':'Pendente'}</span>
-            <button class="btn-ghost" style="padding:6px 4px; font-size:12px;" onclick="toggleDocumento('${cliente.id}','${d.tipo}')">${d.status==='enviado'?'Remover':'Anexar'}</button>
-          </div>
-        </div>
-      `).join('')}
-    </div>
-  `;
-}
-/* icone por tipo de documento (mesma linguagem visual do card do Empreendimento/Conta) */
-function docTipoIcon(tipoDocumento){
-  if(tipoDocumento==='DocumentacaoPessoal') return I.idcard;
-  if(tipoDocumento==='ComprovanteResidencia') return I.pin;
-  if(tipoDocumento==='ComprovanteRenda' || tipoDocumento==='ExtratoBancario') return I.wallet;
-  return I.emptyDoc;
-}
-/* texto de apoio ao corretor por tipo - so o Documentacao Pessoal precisa explicar
-   que qualquer um dos 3 documentos serve (pedido do Denis) */
-function docTipoHint(tipoDocumento){
-  if(tipoDocumento==='DocumentacaoPessoal') return 'Envie RG, CPF ou CNH - qualquer um dos tres serve';
-  return '';
-}
-function documentosChecklistReal(cliente){
-  sfCarregarDocumentos(cliente.id);
-  const docs = cliente.documentosReais || [];
-  const obrig = docs.filter(d=>d.obrigatorio);
-  const enviados = obrig.filter(d=>d.hasFile).length;
-  return `
-    <input type="file" id="doc-upload-input" accept="image/*,.pdf" capture="environment" style="display:none;" onchange="handleDocUploadChange(event)">
-    <div class="section-title" style="display:flex; align-items:center; justify-content:space-between; gap:8px;">
-      <span>Documentos</span>
-      ${docs.length ? `<span class="muted" style="font-size:12px; font-weight:600;">${enviados}/${obrig.length} obrigatorios</span>` : ''}
-    </div>
-    <div class="stack" style="margin-bottom:6px;">
-      ${!docs.length ? `<div class="muted" style="font-size:12px; padding:8px 2px;">Carregando checklist...</div>` : docs.map(d=>documentoRowReal(cliente.id, d)).join('')}
-    </div>
-  `;
-}
-/* rotulo do selo do documento - prioriza o resultado da titularidade (o que importa pro
-   corretor: "essa pessoa e' mesmo a da conta?"), so cai pro status bruto do IDP (Verde/Vermelho)
-   quando a titularidade ainda nao foi conferida nesta sessao (documento carregado do checklist,
-   ainda nao expandido) - pedido do Denis: "confirmado" em vez de "verde". */
-function docPillInfo(d){
-  if(!d.hasFile) return {cls:'neutral', txt:'Pendente'};
-  const t = d.titularidade;
-  if(t && t.status==='confirmado') return {cls:'ok', txt:'Confirmado'};
-  if(t && t.status==='divergente') return {cls:'err', txt:'Divergente'};
-  if(t && t.status==='verificar') return {cls:'warn', txt:'Verificar'};
-  if(d.statusLabel==='Vermelho') return {cls:'warn', txt:'Revisar'};
-  return {cls:'neutral', txt:'Enviado'};
-}
-function documentoRowReal(clienteId, d){
-  const key = `${clienteId}_${d.tipoDocumento}`;
-  const uploading = state.sfDocUploading[key];
-  const processando = state.sfDocProcessando[key];
-  const aplicando = state.sfDocAplicando[key];
-  const excluindo = state.sfDocExcluindo[key];
-  const pill = docPillInfo(d);
-  const iconCls = pill.cls==='ok' ? 'on' : pill.cls==='err' ? 'warn' : '';
-  const hint = docTipoHint(d.tipoDocumento);
-  return `
-    <div class="doc-card">
-      <div class="doc-top">
-        <div class="doc-icon ${iconCls}">${docTipoIcon(d.tipoDocumento)}</div>
-        <div style="flex:1; min-width:0;">
-          <div class="doc-name">${d.label}${d.obrigatorio?'<span class="doc-req" title="Documento obrigatorio">*</span>':''}</div>
-          ${hint ? `<div class="doc-hint">${hint}</div>` : ''}
-          <div class="doc-file">${d.hasFile ? (I.check + `<span class="doc-filelink" onclick="verArquivoDocumento('${d.contentDocumentId}')">${d.fileName||'Documento enviado'}</span>`) : 'Aguardando envio'}</div>
-        </div>
-        <div class="doc-actions">
-          <span class="doc-pill ${pill.cls}">${pill.txt}</span>
-          ${d.hasFile ? `
-            <button class="list-remove" title="Remover documento" ${excluindo?'disabled':''} onclick="excluirDocumentoReal('${clienteId}','${d.tipoDocumento}','${d.contentDocumentId}')">
-              ${excluindo? '<span class="spinner"></span>' : I.close}
-            </button>
-          ` : ''}
-          <button class="doc-camerabtn" title="${d.hasFile?'Trocar arquivo':'Anexar (camera ou galeria)'}" ${uploading?'disabled':''} onclick="iniciarUploadDocumento('${clienteId}','${d.tipoDocumento}')">
-            ${uploading? '<span class="spinner"></span>' : I.camera}
-          </button>
-          ${d.hasFile ? `
-            <button class="doc-camerabtn" title="${d.expandido?'Recolher':'Ver detalhes'}" ${processando?'disabled':''} onclick="toggleDocumentoExpandido('${clienteId}','${d.tipoDocumento}')">
-              ${processando? '<span class="spinner"></span>' : `<span class="doc-chevron${d.expandido?' open':''}">${I.chevron}</span>`}
-            </button>
-          ` : ''}
-        </div>
-      </div>
-      ${d.hasFile && d.expandido ? `
-        ${!d.campos ? `
-          <div class="muted" style="font-size:11.5px; margin-top:8px;">Lendo dados do documento...</div>
-        ` : d.campos.length ? `
-          ${titularidadeBox(d.titularidade)}
-          <div class="field-grid">
-            ${d.campos.map(c=>`<div class="field-card"><div class="fl">${(c.label||c.key).replace(/_/g,' ')}</div><div class="fv">${c.value||'-'}</div></div>`).join('')}
-          </div>
-          <button class="btn btn-secondary" style="font-size:12.5px; padding:9px; margin-top:9px; width:100%;" ${aplicando?'disabled':''} onclick="aplicarDocumento('${clienteId}','${d.tipoDocumento}')">
-            ${aplicando? '<span class="spinner"></span> Aplicando...' : 'Aplicar dados a conta'}
-          </button>
-        ` : `<div class="muted" style="font-size:11.5px; margin-top:8px;">Nenhum campo extraido deste documento.</div>`}
-      ` : ''}
-    </div>
-  `;
-}
-/* confronto conta x documento (CA_IdpTitularidadeService, ja construido no Service real) -
-   mostra o alerta ANTES dos campos, igual ao componente do Salesforce: se o nome/CPF do
-   documento nao bater com o da conta, o corretor ve isso antes de aplicar qualquer dado. */
-function titularidadeBox(t){
-  if(!t || !t.rotulo) return '';
-  const cls = t.status==='confirmado' ? 'ok' : t.status==='divergente' ? 'err' : t.status==='verificar' ? 'warn' : '';
-  const icon = t.status==='confirmado' ? I.check : I.alert;
-  return `
-    <div class="titular-box ${cls}">
-      <div class="titular-head ${cls}">${icon}<span>${t.rotulo}</span></div>
-      ${t.nomeDocumento ? `<div class="titular-line">Nome: <b>${t.nomeConta||'-'}</b> (conta) vs <b>${t.nomeDocumento}</b> (documento)</div>` : ''}
-      ${t.cpfDocumento || t.cpfConta ? `<div class="titular-line">CPF: <b>${t.cpfConta||'-'}</b> (conta) vs <b>${t.cpfDocumento||'-'}</b> (documento) - ${t.cpfRotulo||''}</div>` : ''}
-    </div>
-  `;
-}
 function statusBadge(status){
   const [,cls,,label] = unitStatusInfo(status);
   return `<span class="badge ${cls}">${status==='bloqueada'?I.lock:''}${label}</span>`;
@@ -1107,13 +900,6 @@ async function sfCarregarVisitasLead(leadId){
   render();
 }
 let toastTimer=null;
-function toast(msg){
-  const el = document.getElementById('toast');
-  el.innerHTML = `${I.check} <span>${msg}</span>`;
-  el.classList.add('show');
-  clearTimeout(toastTimer);
-  toastTimer = setTimeout(()=>el.classList.remove('show'), 2600);
-}
 
 /* ---------- ilustracoes ---------- */
 function windowsGrid(x,y,cols,rows,cw,ch,gx,gy,seed){
@@ -1193,49 +979,13 @@ function plantaSvg(dorm){
 }
 
 /* ---------- estado / navegacao ---------- */
-/* foto do avatar (bolinha do cabecalho) - fica so no aparelho (localStorage), nunca no
-   Salesforce: nao existe como escrever/ler a foto de perfil real do usuario via API (o dominio
-   profilephoto/*.file.force.com so aceita cookie de sessao de navegador, nunca Bearer token -
-   testado exaustivamente numa fase anterior). Sem foto escolhida ainda, cai no circulo com as
-   iniciais (mesmo padrao usado em Leads/Contas) - a foto "padrao" que existia antes (embutida em
-   base64) saiu com um filtro/distorcao azul estranha e foi removida. */
-function avatarFotoCarregada(){
-  try{ return localStorage.getItem('codechave_avatar_foto') || null; }
-  catch(e){ return null; }
-}
 function avatarPickerOpen(){ document.getElementById('avatarFileInput').click(); }
-/* redimensiona/corta a foto escolhida num quadrado 240x240 (canvas) antes de guardar - fotos de
-   celular vem em varias resolucoes/proporcoes, e sem isso o avatar circular ficaria distorcido
-   e o localStorage cresceria demais com fotos de varios MB. */
-function onAvatarFileChosen(event){
-  const file = event.target.files && event.target.files[0];
-  event.target.value = '';
-  if(!file) return;
-  const reader = new FileReader();
-  reader.onload = () => {
-    const img = new Image();
-    img.onload = () => {
-      const size = 240;
-      const side = Math.min(img.width, img.height);
-      const sx = (img.width - side) / 2, sy = (img.height - side) / 2;
-      const canvas = document.createElement('canvas');
-      canvas.width = size; canvas.height = size;
-      const ctx = canvas.getContext('2d');
-      ctx.drawImage(img, sx, sy, side, side, 0, 0, size, size);
-      const dataUrl = canvas.toDataURL('image/jpeg', 0.85);
-      try{ localStorage.setItem('codechave_avatar_foto', dataUrl); }catch(e){}
-      state.avatarFoto = dataUrl;
-      render();
-    };
-    img.src = reader.result;
-  };
-  reader.readAsDataURL(file);
-}
 
 const state = {
   tab:'home', mode:'login', loginLoading:false,
-  stacks:{ home:[{screen:'home'}], leads:[{screen:'leadsList'}], contas:[{screen:'contasList'}], empreendimentos:[{screen:'empList'}], reservas:[{screen:'resList'}], negocios:[{screen:'negociosList'}] },
-  filters:{ leadsQuery:'', contasQuery:'', empQuery:'', unitFilter:'disponivel', unitSearch:'', comissaoFilter:'todas', torreAtivaPorEmp:{} },
+  stacks:{ home:[{screen:'home'}], clientes:[{screen:'clientesList'}], empreendimentos:[{screen:'empList'}], negocios:[{screen:'negociosHub'}] },
+  segC:'leads', segN:'reservas', contaTab:'reservas', negTab:'resumo', sheet:null, docPick:null, present:null, wa:null, propPara:null,
+  filters:{ leadsQuery:'', contasQuery:'', clientesQuery:'', empQuery:'', unitFilter:'disponivel', unitSearch:'', comissaoFilter:'todas', torreAtivaPorEmp:{} },
   context:{ preselectCliente:null },
   wizard:null,
   galeria:{},
@@ -1259,114 +1009,9 @@ const state = {
 function go(screen, params={}){ state.stacks[state.tab].push({screen, params}); render({resetScroll:true}); }
 function replaceTop(screen, params={}){ const s=state.stacks[state.tab]; s[s.length-1] = {screen, params}; render({resetScroll:true}); }
 function resetTabTo(screen, params={}){ state.stacks[state.tab] = [{screen, params}]; render({resetScroll:true}); }
-function goBack(){
-  if(state.mode==='wizard'){ wizardBack(); return; }
-  const s = state.stacks[state.tab];
-  if(s.length>1){ s.pop(); render({resetScroll:true}); }
-}
 /* tela principal de cada aba - usada pra "resetar" a aba sempre que o corretor toca no
    botao dela na tab bar (ver switchTab) */
-const TAB_ROOTS = { home:'home', leads:'leadsList', contas:'contasList', empreendimentos:'empList', reservas:'resList', negocios:'negociosList' };
-/* tocar num botao da tab bar sempre leva pra tela principal daquela aba, mesmo que o corretor
-   tivesse navegado fundo nela antes (ex: Comissoes, aberta a partir da Home) - assim "Inicio"
-   sempre volta pra Home sem precisar usar o botao de voltar la em cima. quando switchTab e
-   chamado programaticamente antes de um go() (ex: abrir um lead a partir da Home), o go()
-   empilha por cima dessa tela ja reiniciada, entao esses fluxos continuam funcionando normal. */
-function switchTab(tab){
-  state.tab = tab; state.mode='tabs';
-  state.stacks[tab] = [{screen: TAB_ROOTS[tab]}];
-  render({resetScroll:true});
-}
 
-/* ---------- render principal ---------- */
-function currentScreen(){
-  if(state.mode==='wizard') return renderWizard();
-  const top = state.stacks[state.tab][state.stacks[state.tab].length-1];
-  switch(top.screen){
-    case 'home': return screenHome();
-    case 'leadsList': return screenLeadsList();
-    case 'leadForm': return screenLeadForm(top.params);
-    case 'leadDetail': return screenLeadDetail(top.params.id);
-    case 'clienteForm': return screenClienteForm(top.params);
-    case 'clienteDetail': return screenClienteDetail(top.params.id);
-    case 'contaEditar': return screenContaEditar(top.params.id);
-    case 'contasList': return screenContasList();
-    case 'empList': return screenEmpList();
-    case 'empDetail': return screenEmpDetail(top.params.id);
-    case 'unidadeDetail': return screenUnidadeDetail(top.params.id);
-    case 'resList': return screenResList();
-    case 'resDetail': return screenResDetail(top.params.id);
-    case 'negociosList': return screenNegociosList();
-    case 'negocioDetail': return screenNegocioDetail(top.params.id);
-    case 'visitaForm': return screenVisitaForm();
-    case 'comissoes': return screenComissoes();
-    case 'propostaResumo': return screenPropostaResumo();
-    default: return {title:'', back:false, body:''};
-  }
-}
-/* render(opts): por padrao preserva a posicao de rolagem - a maioria das chamadas de render()
-   e so uma atualizacao de estado na MESMA tela (trocar filtro, avancar foto da galeria, marcar
-   status), entao nao faz sentido voltar pro topo. So as funcoes de navegacao de verdade
-   (go/goBack/switchTab/etc, ver mais abaixo) pedem resetScroll:true, porque ai sim o usuario
-   esta indo pra uma tela/etapa nova e faz sentido comecar do topo. */
-function render(opts={}){
-  const appbarEl = document.getElementById('appbar');
-  if(state.mode==='login'){
-    appbarEl.style.display = 'none';
-    document.getElementById('tabbar').style.display = 'none';
-    document.getElementById('view').innerHTML = screenLoginBody();
-    return;
-  }
-  appbarEl.style.display = 'flex';
-
-  const active = document.activeElement;
-  const activeId = active && active.id ? active.id : null;
-  const selStart = active && typeof active.selectionStart === 'number' ? active.selectionStart : null;
-  const view0 = document.getElementById('view');
-  const scrollTop = view0 ? view0.scrollTop : 0;
-
-  const {title, back, action, body} = currentScreen();
-  document.getElementById('headerTitle').textContent = title;
-  document.getElementById('backBtn').hidden = !back;
-  document.getElementById('headerAction').innerHTML = action||'';
-  const view = document.getElementById('view');
-  view.innerHTML = `<div class="screen">${body}</div>`;
-  view.scrollTop = (opts.resetScroll && !activeId) ? 0 : scrollTop;
-  document.getElementById('tabbar').style.display = state.mode==='wizard' ? 'none' : 'flex';
-  document.querySelectorAll('.tab-btn').forEach(b=>b.classList.toggle('active', b.dataset.tab===state.tab && state.mode!=='wizard'));
-
-  if(activeId){
-    const el = document.getElementById(activeId);
-    if(el){
-      el.focus({preventScroll:true});
-      if(selStart != null && typeof el.setSelectionRange === 'function'){
-        try{ el.setSelectionRange(selStart, selStart); }catch(e){}
-      }
-    }
-  }
-}
-
-/* ---------- LOGIN ---------- */
-function screenLoginBody(){
-  return `
-    <div class="login-screen">
-      <svg viewBox="0 0 300 92" width="230" height="70.5" xmlns="http://www.w3.org/2000/svg">
-        <text x="150" y="42" text-anchor="middle" font-family="'Poppins', sans-serif" font-weight="800" font-size="36" fill="var(--chrome-text)">Code<tspan fill="var(--chrome-accent)">Chave</tspan></text>
-        <rect x="129" y="58" width="42" height="2" fill="var(--chrome-accent)"/>
-        <text x="150" y="80" text-anchor="middle" font-family="'Outfit', sans-serif" font-weight="600" font-size="11" letter-spacing="2.5" fill="var(--chrome-text-muted)">BY CODEART</text>
-      </svg>
-      <p class="login-tagline">Proposta e reserva de imoveis, direto do bolso do corretor.</p>
-      <div class="login-actions">
-        ${state.loginLoading ? `
-          <div class="sync-row" style="color:var(--chrome-text-muted); margin-top:0;"><span class="spinner" style="border-color:rgba(255,255,255,.18); border-top-color:var(--chrome-accent);"></span> Conectando a sua org Salesforce...</div>
-        ` : `
-          <button class="btn btn-onlight" onclick="doLogin()">${I.cloud} Entrar com Salesforce</button>
-        `}
-      </div>
-      <div class="login-footer">Ambiente: Producao - v0.1</div>
-    </div>
-  `;
-}
 function doLogin(){
   state.loginLoading = true;
   render();
@@ -1407,8 +1052,10 @@ function doLogout(){
   state.buscaFiltros = { bairro:'', precoMin:'', precoMax:'', suites:0, vagas:0, comodidades:[] };
   DB.negocios = [];
   state.tab = 'home';
-  state.stacks = { home:[{screen:'home'}], leads:[{screen:'leadsList'}], contas:[{screen:'contasList'}], empreendimentos:[{screen:'empList'}], reservas:[{screen:'resList'}], negocios:[{screen:'negociosList'}] };
-  state.filters = { leadsQuery:'', contasQuery:'', empQuery:'', unitFilter:'disponivel', unitSearch:'', comissaoFilter:'todas', torreAtivaPorEmp:{} };
+  state.stacks = { home:[{screen:'home'}], clientes:[{screen:'clientesList'}], empreendimentos:[{screen:'empList'}], negocios:[{screen:'negociosHub'}] };
+  state.segC = 'leads'; state.segN = 'reservas'; state.contaTab = 'reservas'; state.negTab = 'resumo';
+  state.sheet = null; state.docPick = null; state.present = null; state.wa = null; state.propPara = null;
+  state.filters = { leadsQuery:'', contasQuery:'', clientesQuery:'', empQuery:'', unitFilter:'disponivel', unitSearch:'', comissaoFilter:'todas', torreAtivaPorEmp:{} };
   state.context = { preselectCliente:null };
   state.wizard = null;
   state.galeria = {};
@@ -1419,133 +1066,7 @@ function doLogout(){
   render({resetScroll:true});
 }
 
-/* ---------- HOME ---------- */
-/* data de hoje por extenso (ex: "Sexta-feira, 26 de setembro") - antes era um texto fixo */
-function hojeExtenso(){
-  const s = new Date().toLocaleDateString('pt-BR',{weekday:'long',day:'numeric',month:'long'});
-  return s.charAt(0).toUpperCase() + s.slice(1);
-}
-function screenHome(){
-  const leadsHoje = DB.leads.filter(l=>l.criado===sfDataCurta(new Date().toISOString())).length;
-  const emNegociacao = DB.leads.filter(l=>l.status!=='Novo').length + DB.reservas.filter(r=>r.status==='Em analise').length;
-  const reservasMes = DB.reservas.length;
-  const roletaLeads = DB.leads.filter(l=>l.roleta && l.status==='Novo').sort((a,b)=>(a.chegouMin||0)-(b.chegouMin||0));
-  const visitas = visitasUpcoming();
-  const body = `
-    <div class="hero-panel" style="display:flex; align-items:center; justify-content:space-between; gap:14px;">
-      <div style="min-width:0;">
-        <div class="eyebrow" style="color:var(--chrome-text-muted);">Bom te ver</div>
-        <h2 style="margin:3px 0 0; font-size:22px; color:var(--chrome-text);">Ola, ${state.sfUsuarioNome || 'Corretor(a)'}</h2>
-        <div style="color:var(--chrome-text-muted); font-size:12.5px; margin-top:3px;">${hojeExtenso()}</div>
-      </div>
-      <button class="avatar avatar-hero avatar-editable" onclick="avatarPickerOpen()" aria-label="Alterar foto de perfil">
-        ${state.avatarFoto ? `<img src="${state.avatarFoto}" alt="Foto de perfil">` : initials(state.sfUsuarioNomeCompleto || state.sfUsuarioNome || 'Corretor')}
-        <span class="avatar-edit-badge">${I.camera}</span>
-      </button>
-    </div>
 
-    ${state.sfRoletaCadastrado? `
-      <div class="section-title" style="margin-top:18px;">Meu status na roleta</div>
-      <div class="chip-row" style="margin-bottom:4px;">
-        ${['Online','Ausente','Offline'].map(s=>`
-          <button class="chip ${state.sfRoletaStatus===s? 'active':''}" onclick="roletaStatusSet('${s}')">${s}</button>
-        `).join('')}
-      </div>
-    ` : ''}
-
-    <div class="section-title" style="display:flex; align-items:center; justify-content:space-between; gap:8px;">
-      <span style="display:flex; align-items:center; gap:7px;"><span class="live-dot"></span>Leads da roleta${roletaLeads.length? ` (${roletaLeads.length})` : ''}</span>
-      <button class="btn-ghost" style="padding:0; width:auto; font-size:12.5px;" onclick="switchTab('leads')">Ver todos</button>
-    </div>
-    ${roletaLeads.length? `
-      <div>
-        ${roletaLeads.map(roletaLeadCard).join('')}
-      </div>
-    ` : emptyState('Nenhum lead novo na fila agora', I.emptyDoc)}
-
-    <div class="stats-row" style="margin-top:26px; padding-top:22px; border-top:1px solid var(--border);">
-      <div class="stat-tile"><div class="n mono">${leadsHoje}</div><div class="l">Leads hoje</div></div>
-      <div class="stat-tile"><div class="n mono">${emNegociacao}</div><div class="l">Em negociacao</div></div>
-      <div class="stat-tile"><div class="n mono">${reservasMes}</div><div class="l">Reservas no mes</div></div>
-    </div>
-
-    <div class="section-title">Proximas visitas</div>
-    ${visitas.length? `<div class="stack">${visitas.map(visitaCard).join('')}</div>` : emptyState('Nenhuma visita agendada', I.calendar)}
-
-    <div class="section-title">Acoes rapidas</div>
-    <div class="quick-actions">
-      <button class="quick-btn" onclick="switchTab('leads'); go('leadForm',{})">
-        <span class="ic">${I.plus}</span><b>Novo lead</b>
-        <span class="muted" style="font-size:11.5px;">Cadastrar contato</span>
-      </button>
-      <button class="quick-btn" onclick="startNovaReserva()">
-        <span class="ic">${I.building}</span><b>Nova reserva</b>
-        <span class="muted" style="font-size:11.5px;">Escolher unidade</span>
-      </button>
-      <button class="quick-btn" onclick="openAgendarVisita()">
-        <span class="ic">${I.calendar}</span><b>Agendar visita</b>
-        <span class="muted" style="font-size:11.5px;">Marcar visita ao decorado</span>
-      </button>
-      <button class="quick-btn" onclick="go('comissoes',{}); sfCarregarComissoes()">
-        <span class="ic">${I.wallet}</span><b>Comissoes</b>
-        <span class="muted" style="font-size:11.5px;">${comissoesResumoCurto()}</span>
-      </button>
-    </div>
-  `;
-  const action = `<button class="iconbtn" onclick="doLogout()" aria-label="Sair / trocar de usuario">${I.logout}</button>`;
-  return {title:'CodeChave', back:false, action, body};
-}
-function roletaLeadCard(l){
-  const emp = empById(l.interesse);
-  return `
-    <div class="roleta-card">
-      <button class="roleta-card-main" onclick="switchTab('leads'); go('leadDetail',{id:'${l.id}'})">
-        <div class="avatar">${initials(l.nome)}</div>
-        <div style="flex:1; min-width:0;">
-          <div class="name-row">
-            <span style="font-weight:600; font-size:14px;">${l.nome}</span>
-            <span class="badge badge-blue">Novo</span>
-          </div>
-          <div class="muted" style="font-size:12px;">${[emp&&emp.nome, l.origem, l.cidade].filter(Boolean).join(' - ')}</div>
-        </div>
-      </button>
-      <div class="roleta-bottom">
-        <span class="roleta-time">${chegouLabel(l.chegouMin)}</span>
-        <div class="roleta-actions">
-          <a href="tel:${l.telefone.replace(/\D/g,'')}" aria-label="Ligar para ${l.nome}" onclick="event.stopPropagation()">${I.phone}</a>
-          <a href="https://wa.me/55${l.telefone.replace(/\D/g,'')}" target="_blank" rel="noopener" aria-label="WhatsApp para ${l.nome}" onclick="event.stopPropagation()">${I.whats}</a>
-        </div>
-      </div>
-    </div>
-  `;
-}
-function startNovaReserva(){
-  switchTab('empreendimentos');
-  toast('Escolha um empreendimento e uma unidade disponivel');
-}
-
-/* ---------- LEADS ---------- */
-function screenLeadsList(){
-  const q = state.filters.leadsQuery.toLowerCase();
-  const list = DB.leads.filter(l=> l.nome.toLowerCase().includes(q));
-  const action = `<button class="iconbtn" onclick="go('leadForm',{})" aria-label="Novo lead">${I.plus}</button>`;
-  const body = `
-    <div class="search-wrap">${I.search}<input id="leadSearch" placeholder="Buscar lead" value="${state.filters.leadsQuery}" oninput="state.filters.leadsQuery=this.value; render()"></div>
-    ${list.length? `<div class="stack">${list.map(leadCard).join('')}</div>` : emptyState('Nenhum lead encontrado', I.emptyDoc)}
-  `;
-  return {title:'Leads', back:false, action, body};
-}
-function leadCard(l){
-  return `
-    <button class="list-card" onclick="go('leadDetail',{id:'${l.id}'})">
-      <div class="avatar">${initials(l.nome)}</div>
-      <div style="flex:1; min-width:0;">
-        <div style="font-weight:600; font-size:14px;">${l.nome}</div>
-        <div class="muted" style="font-size:12px;">${[l.telefone, empById(l.interesse)&&empById(l.interesse).nome].filter(Boolean).join(' - ')}</div>
-      </div>
-      <span class="badge badge-blue">${l.status}</span>
-    </button>`;
-}
 /* so' cadastro de lead novo (POST real) - a edicao de lead existente foi removida porque nao
    persistia no Salesforce (ver screenLeadDetail). "lead" fica sempre null aqui. */
 function screenLeadForm(params){
@@ -1571,7 +1092,7 @@ function screenLeadForm(params){
     <div class="field"><label for="lf-obs">Observacoes</label><textarea id="lf-obs" placeholder="Preferencias, orcamento, melhor horario de contato...">${lead?lead.obs||'':''}</textarea></div>
     <button class="btn btn-primary" onclick="saveLead()">${I.check} Salvar lead</button>
   `;
-  return {title:'Novo lead', back:true, body};
+  return {title:'Novo lead', back:true, hideTab:true, sub:'Leva 30 segundos. Vai direto para o Salesforce.', body};
 }
 function saveLead(){
   const nome = document.getElementById('lf-nome').value.trim();
@@ -1587,7 +1108,7 @@ function saveLead(){
   const id = 'l'+(++seq);
   const novoLead = {id, status:'Novo', criado:sfDataCurta(new Date().toISOString()), ...data};
   DB.leads.unshift(novoLead);
-  resetTabTo('leadsList');
+  resetTabTo('clientesList');
   toast('Lead salvo - sincronizando com o Salesforce...');
   sfApi('/leads', {method:'POST', body:JSON.stringify({nome:data.nome, telefone:data.telefone, email:data.email, origem:data.origem, empreendimentoId:data.interesse||null})})
     .then(res=>{
@@ -1605,87 +1126,6 @@ function saveLead(){
    metadados do PathAssistant/BusinessProcess estava desatualizada - retrieve fresco voltou sem
    pathAssistantSteps, entao a ordem real e a que aparece na tela, nao a do metadado). */
 const LEAD_STAGES = ['Desqualificado','Novo','Contato Realizado','Em Atendimento','Qualificação','Convertido'];
-function leadStatusPath(l){
-  const converted = DB.clientes.some(c=>c.origemLeadId===l.id);
-  const effective = converted ? 'Convertido' : l.status;
-  const idx = LEAD_STAGES.indexOf(effective);
-  return `
-    <div class="lead-path">
-      ${LEAD_STAGES.map((s,i)=>{
-        const st = i<idx ? 'done' : i===idx ? 'current' : 'todo';
-        const locked = s==='Convertido' || st==='current';
-        return `<button class="path-step ${st}" ${locked?'disabled':`onclick="setLeadStatus('${l.id}','${s}')"`}>${st==='done'?`<span class="path-check">${I.check}</span>`:''}${s}</button>`;
-      }).join('')}
-    </div>
-  `;
-}
-function setLeadStatus(id, status){
-  const l = leadById(id);
-  const statusAnterior = l.status;
-  l.status = status;
-  render();
-  if(!l.real){
-    toast('Status atualizado para "'+status+'"');
-    return;
-  }
-  toast('Atualizando status no Salesforce...');
-  sfApi(`/leads/${id}`, {method:'PATCH', body:JSON.stringify({status})})
-    .then(()=>{ toast('Status atualizado para "'+status+'"'); })
-    .catch(e=>{
-      l.status = statusAnterior;
-      render();
-      toast('Nao foi possivel atualizar no Salesforce: '+e.message);
-    });
-}
-function screenLeadDetail(id){
-  const l = leadById(id);
-  const emp = empById(l.interesse);
-  const converted = DB.clientes.some(c=>c.origemLeadId===id);
-  if(l.real) sfCarregarVisitasLead(id);
-  const visita = leadVisita(id);
-  /* sem botao "Editar lead": a edicao de campos so' gravava local (nenhum PATCH no Salesforce) e
-     se perdia ao recarregar - so' o status (caminho acima, setLeadStatus) e' editavel, via PATCH real. */
-  const body = `
-    <div style="display:flex; align-items:center; gap:14px; margin-bottom:16px;">
-      <div class="avatar" style="width:56px; height:56px; font-size:18px;">${initials(l.nome)}</div>
-      <div style="font-weight:700; font-size:17px;">${l.nome}</div>
-    </div>
-    ${leadStatusPath(l)}
-    <div class="btn-row" style="margin-bottom:18px;">
-      <a class="btn btn-secondary" href="tel:${l.telefone.replace(/\D/g,'')}">${I.phone} Ligar</a>
-      <a class="btn btn-secondary" href="https://wa.me/55${l.telefone.replace(/\D/g,'')}" target="_blank" rel="noopener">${I.whats} WhatsApp</a>
-    </div>
-    ${visita ? `
-      <div class="card" style="padding:12px 14px; margin-bottom:18px; display:flex; align-items:center; gap:12px;">
-        <div class="ic-badge" style="width:38px; height:38px; border-radius:10px; background:var(--surface-2); display:flex; align-items:center; justify-content:center; color:var(--accent); flex:0 0 auto;">${I.calendar}</div>
-        <div style="flex:1; min-width:0;">
-          <div style="font-weight:700; font-size:13.5px;">Visita agendada</div>
-          <div class="muted" style="font-size:12px;">${fmtDataBR(visita.data)} as ${visita.hora} - ${visita.local||'Local a definir'}</div>
-        </div>
-        <button class="list-remove" onclick="cancelarVisita('${visita.id}')" aria-label="Cancelar visita">${I.close}</button>
-      </div>
-    ` : `
-      <button class="btn btn-secondary" style="margin-bottom:18px;" onclick="openAgendarVisita('${l.id}')">${I.calendar} Agendar visita</button>
-    `}
-    <div class="kv-table">
-      <div class="kv-row"><span class="k">Telefone</span><span class="v">${l.telefone}</span></div>
-      <div class="kv-row"><span class="k">E-mail</span><span class="v" style="font-family:inherit; font-weight:500;">${l.email||'-'}</span></div>
-      <div class="kv-row"><span class="k">Origem</span><span class="v" style="font-family:inherit; font-weight:500;">${l.origem}</span></div>
-      <div class="kv-row"><span class="k">Interesse</span><span class="v" style="font-family:inherit; font-weight:500;">${emp ? emp.nome : '-'}</span></div>
-      ${l.cidade ? `<div class="kv-row"><span class="k">Cidade</span><span class="v" style="font-family:inherit; font-weight:500;">${l.cidade}</span></div>` : ''}
-      ${l.midia ? `<div class="kv-row"><span class="k">Midia</span><span class="v" style="font-family:inherit; font-weight:500;">${l.midia}</span></div>` : ''}
-      ${l.corretorNome ? `<div class="kv-row"><span class="k">Corretor</span><span class="v" style="font-family:inherit; font-weight:500;">${l.corretorNome}</span></div>` : ''}
-      <div class="kv-row"><span class="k">Cadastrado em</span><span class="v">${l.criado}/2026</span></div>
-    </div>
-    ${l.obs? `<div class="section-title">Observacoes</div><p class="muted" style="font-size:13.5px;">${l.obs}</p>` : ''}
-    <div style="margin-top:22px;">
-      ${converted
-        ? `<button class="btn btn-secondary" disabled>${I.check} Ja convertido em conta</button>`
-        : `<button class="btn btn-primary" onclick="go('clienteForm',{leadId:'${l.id}'})">Converter em conta</button>`}
-    </div>
-  `;
-  return {title:'Lead', back:true, body};
-}
 
 /* ---------- CONTA (cliente) ---------- */
 const UF_BRASIL = ['AC','AL','AP','AM','BA','CE','DF','ES','GO','MA','MT','MS','MG','PA','PB','PR','PE','PI','RJ','RN','RS','RO','RR','SC','SP','SE','TO'];
@@ -1729,7 +1169,7 @@ function screenClienteForm(params){
     <div class="field"><label for="cf-cep">CEP</label><input id="cf-cep" placeholder="00000-000"></div>
     <button class="btn btn-primary" id="cf-salvar" onclick="saveCliente('${lead?lead.id:''}')">${I.check} Salvar conta</button>
   `;
-  return {title:'Cadastro de conta', back:true, body};
+  return {title:'Cadastro de conta', back:true, hideTab:true, body};
 }
 function saveCliente(leadId){
   const nome = document.getElementById('cf-nome').value.trim();
@@ -1843,21 +1283,6 @@ function saveContaAvulsa(d){
       toast('Nao foi possivel cadastrar a conta no Salesforce: '+e.message);
     });
 }
-function boletoRow(b){
-  const cls = b.status==='Pago' ? 'badge-available' : b.status==='Atrasado' ? 'badge-sold' : 'badge-blue';
-  return `
-    <div class="list-card" style="cursor:default;">
-      <div style="flex:1; min-width:0;">
-        <div style="font-weight:600; font-size:13.5px;">${b.descricao}</div>
-        <div class="muted" style="font-size:11.5px;">Vencimento ${b.vencimento}</div>
-      </div>
-      <div style="display:flex; align-items:center; gap:8px; flex:0 0 auto;">
-        <div class="mono" style="font-weight:600; font-size:13px;">${brl(b.valor)}</div>
-        <span class="badge ${cls}">${b.status}</span>
-      </div>
-    </div>
-  `;
-}
 /* ---------- COMISSOES (reais - CA_RestComissoes, GET /comissoes) ----------
    antes era 100% mock (DB.comissoes cm1..cm5). Cada comissao real traz status "Recebida" ou
    outro valor (tratado como "A Receber"), valor, dataPagamento (quando recebida), criadoEm,
@@ -1964,110 +1389,6 @@ function screenComissoes(){
     `).join('') : emptyState('Nenhuma comissao nesse filtro', I.wallet)}
   `;
   return {title:'Comissoes', back:true, body};
-}
-function screenClienteDetail(id){
-  const c = clienteById(id);
-  if(c.real){ sfCarregarContaDetalhe(id); sfCarregarBoletos(id); }
-  const reservasCliente = DB.reservas.filter(r=>r.clienteId===id);
-  const contratos = reservasCliente.filter(r=>r.status==='Assinada');
-  const emAndamento = reservasCliente.filter(r=>r.status!=='Assinada');
-  const boletos = DB.boletos.filter(b=>b.clienteId===id);
-  const atrasados = boletos.filter(b=>b.status==='Atrasado');
-  const pagos = boletos.filter(b=>b.status==='Pago');
-  const body = `
-    <div style="display:flex; align-items:center; gap:14px; margin-bottom:18px;">
-      <div class="avatar" style="width:56px; height:56px; font-size:18px;">${initials(c.nome)}</div>
-      <div>
-        <div style="font-weight:700; font-size:17px;">${c.nome}</div>
-        <span class="muted mono" style="font-size:12px;">${c.cpf}</span>
-      </div>
-    </div>
-    <div class="kv-table">
-      <div class="kv-row"><span class="k">RG</span><span class="v">${c.rg||'-'}</span></div>
-      <div class="kv-row"><span class="k">Telefone</span><span class="v">${c.telefone||'-'}</span></div>
-      <div class="kv-row"><span class="k">E-mail</span><span class="v" style="font-family:inherit; font-weight:500;">${c.email||'-'}</span></div>
-      <div class="kv-row"><span class="k">Endereco</span><span class="v" style="font-family:inherit; font-weight:500; text-align:right; max-width:62%;">${c.endereco||'-'}</span></div>
-      <div class="kv-row"><span class="k">Estado civil</span><span class="v" style="font-family:inherit; font-weight:500;">${c.estadoCivil||'-'}</span></div>
-      <div class="kv-row"><span class="k">Profissao</span><span class="v" style="font-family:inherit; font-weight:500;">${c.profissao||'-'}</span></div>
-      <div class="kv-row"><span class="k">Renda mensal</span><span class="v">${c.renda?brl(c.renda):'-'}</span></div>
-      ${c.naturalidade ? `<div class="kv-row"><span class="k">Naturalidade</span><span class="v" style="font-family:inherit; font-weight:500;">${c.naturalidade}</span></div>` : ''}
-      ${c.dataNascimento ? `<div class="kv-row"><span class="k">Data de nascimento</span><span class="v">${fmtDataBR(c.dataNascimento)}</span></div>` : ''}
-      ${c.nomeMae ? `<div class="kv-row"><span class="k">Nome da mae</span><span class="v" style="font-family:inherit; font-weight:500;">${c.nomeMae}</span></div>` : ''}
-      ${c.nomePai ? `<div class="kv-row"><span class="k">Nome do pai</span><span class="v" style="font-family:inherit; font-weight:500;">${c.nomePai}</span></div>` : ''}
-      ${(c.estadoCivil||'').startsWith('Casado') && c.conjugeNome ? `<div class="kv-row"><span class="k">Conjuge</span><span class="v" style="font-family:inherit; font-weight:500;">${c.conjugeNome}</span></div>` : ''}
-      ${c.empreendimentoInteresseNome ? `<div class="kv-row"><span class="k">Empreendimento de interesse</span><span class="v" style="font-family:inherit; font-weight:500;">${c.empreendimentoInteresseNome}</span></div>` : ''}
-      ${c.empreendimentoReservaNome ? `<div class="kv-row"><span class="k">Empreendimento reservado</span><span class="v" style="font-family:inherit; font-weight:500;">${c.empreendimentoReservaNome}</span></div>` : ''}
-    </div>
-
-    ${documentosChecklist(c)}
-
-    <div class="section-title">Situacao financeira</div>
-    ${boletos.length ? `
-      ${atrasados.length? `
-        <div class="alert-card">
-          ${I.alert}
-          <div>
-            <b>${atrasados.length} boleto${atrasados.length>1?'s':''} em atraso</b>
-            <div class="muted" style="font-size:12px; margin-top:2px;">Total em atraso: ${brl(atrasados.reduce((s,b)=>s+b.valor,0))}</div>
-          </div>
-        </div>
-      ` : ''}
-      <div class="stats-row" style="margin-bottom:14px;">
-        <div class="stat-tile"><div class="n mono">${boletos.length}</div><div class="l">Boletos</div></div>
-        <div class="stat-tile"><div class="n mono">${pagos.length}</div><div class="l">Pagos</div></div>
-        <div class="stat-tile"><div class="n mono">${atrasados.length}</div><div class="l">Em atraso</div></div>
-      </div>
-      <div class="stack" style="margin-bottom:18px;">${boletos.map(boletoRow).join('')}</div>
-    ` : emptyState('Nenhum boleto gerado ainda', I.emptyDoc)}
-
-    ${c.real ? `
-      <div class="section-title">Reservas (Salesforce)</div>
-      ${(c.reservasReais&&c.reservasReais.length)? `
-        <div class="stack">${c.reservasReais.map(r=>`
-          <div class="list-card" style="cursor:default;">
-            <div class="ic-badge" style="width:34px; height:34px; border-radius:9px; background:var(--surface-2); display:flex; align-items:center; justify-content:center; color:var(--status-available); flex:0 0 auto;">${I.contract}</div>
-            <div style="flex:1; min-width:0;">
-              <div style="font-weight:600; font-size:13.5px;">${r.unidadeNome} - ${r.empreendimentoNome}</div>
-              <div class="muted" style="font-size:11.5px;">${r.valor?brl(r.valor):''}</div>
-            </div>
-            <span class="badge ${r.status==='Ativa'?'badge-available':'badge-blue'}">${r.status}</span>
-          </div>`).join('')}</div>
-      ` : emptyState('Nenhuma reserva ainda', I.contract)}
-    ` : `
-      ${contratos.length? `
-        <div class="section-title">Contratos</div>
-        <div class="stack">${contratos.map(r=>`
-          <button class="list-card" onclick="switchTab('reservas'); go('resDetail',{id:'${r.id}'})">
-            <div class="ic-badge" style="width:34px; height:34px; border-radius:9px; background:var(--surface-2); display:flex; align-items:center; justify-content:center; color:var(--status-available); flex:0 0 auto;">${I.contract}</div>
-            <div style="flex:1; min-width:0;">
-              <div style="font-weight:600; font-size:13.5px;">${unitCode(unitById(r.unitId))} - ${empById(r.empId).nome}</div>
-              <div class="muted" style="font-size:11.5px;">${r.protocolo} - ${brl(r.valor)}</div>
-            </div>
-            <span class="badge badge-available">Ativo</span>
-          </button>`).join('')}</div>
-      `:''}
-
-      ${emAndamento.length? `
-        <div class="section-title">Reservas em andamento</div>
-        <div class="stack">${emAndamento.map(r=>`
-          <button class="list-card" onclick="switchTab('reservas'); go('resDetail',{id:'${r.id}'})">
-            <div style="flex:1; min-width:0;">
-              <div style="font-weight:600; font-size:13.5px;">${unitCode(unitById(r.unitId))} - ${empById(r.empId).nome}</div>
-              <div class="muted" style="font-size:11.5px;">${r.protocolo}</div>
-            </div>
-            <span class="badge badge-reserved">${r.status}</span>
-          </button>`).join('')}</div>
-      `:''}
-
-      ${!reservasCliente.length ? emptyState('Nenhuma reserva ou contrato ainda', I.contract) : ''}
-    `}
-
-    <div style="margin-top:22px;">
-      <button class="btn btn-primary" onclick="switchTab('empreendimentos'); state.context.preselectCliente='${c.id}'; toast('Selecione a unidade para iniciar a proposta de ${c.nome.split(' ')[0]}')">Iniciar proposta</button>
-    </div>
-  `;
-  const action = `<button class="iconbtn" onclick="go('contaEditar',{id:'${c.id}'})" aria-label="Editar conta">${I.edit}</button>`;
-  return {title:'Conta', back:true, action, body};
 }
 
 /* ---------- EDITAR CONTA (todos os campos reais que existem no Account - mae/pai/naturalidade/
@@ -2386,72 +1707,7 @@ function salvarContaEditar(){
     })
     .catch(e=>{ ce.saving=false; render(); toast('Nao foi possivel salvar: '+e.message); });
 }
-function screenContasList(){
-  const q = state.filters.contasQuery.toLowerCase();
-  const list = DB.clientes.filter(c=> c.nome.toLowerCase().includes(q));
-  const action = `<button class="iconbtn" onclick="go('clienteForm',{})" aria-label="Nova conta">${I.plus}</button>`;
-  const body = `
-    <div class="search-wrap">${I.search}<input id="contasSearch" placeholder="Buscar conta" value="${state.filters.contasQuery}" oninput="state.filters.contasQuery=this.value; render()"></div>
-    ${list.length? `<div class="stack">${list.map(contaCard).join('')}</div>` : emptyState('Nenhuma conta cadastrada ainda', I.idcard)}
-  `;
-  return {title:'Contas', back:false, action, body};
-}
-function contaCard(c){
-  const abertas = c.real ? 0 : DB.reservas.filter(r=>r.clienteId===c.id).length;
-  return `
-    <button class="list-card" onclick="go('clienteDetail',{id:'${c.id}'})">
-      <div class="avatar">${initials(c.nome)}</div>
-      <div style="flex:1; min-width:0;">
-        <div style="font-weight:600; font-size:14px;">${c.nome}</div>
-        <div class="muted mono" style="font-size:11.5px;">${c.cpf}</div>
-      </div>
-      ${c.real? `<span class="badge badge-blue">Reserva em andamento</span>` : abertas? `<span class="badge badge-blue">${abertas} reserva${abertas>1?'s':''}</span>` : ''}
-    </button>`;
-}
 
-/* ---------- EMPREENDIMENTOS ---------- */
-/* galeria de fotos: cada foto real enviada (PHOTOS[e.id], uma lista) vira um slide, com a
-   legenda dela (Fachada, Sala, Area comum...). assim que existe pelo menos uma foto real a
-   ilustracao gerada some da galeria - ela so aparece como espera enquanto nao chega nenhuma
-   foto verdadeira daquele empreendimento */
-function empGallery(e){
-  const fotos = PHOTOS[e.id] || [];
-  const fotosReais = e.fotosReais || [];
-  const total = fotos.length || (fotosReais.length>1 ? fotosReais.length : 2);
-  const idx = state.galeria[e.id] || 0;
-  let content;
-  const fotoSf = idx===0 ? sfFotoBanner(e) : null;
-  if(fotos.length){
-    content = `<div class="slide"><img src="${fotos[idx].src}" alt="${fotos[idx].tag} - ${e.nome}" style="width:100%; height:100%; object-fit:cover; display:block;"></div><span class="slide-tag">${fotos[idx].tag}</span>`;
-  } else if(fotosReais.length>1){
-    /* galeria real (Salesforce Files) - varias fotos anexadas ao empreendimento */
-    const f = fotosReais[idx] || fotosReais[0];
-    sfCarregarFotoPorId(f.contentVersionId);
-    const src = state.sfGaleriaCache[f.contentVersionId];
-    content = src
-      ? `<div class="slide"><img src="${src}" alt="${f.titulo||''} - ${e.nome}" style="width:100%; height:100%; object-fit:cover; display:block;"></div><span class="slide-tag">${f.titulo||'Foto'}</span>`
-      : `<div class="slide-placeholder"><span class="spinner"></span></div>`;
-  } else if(fotoSf){
-    content = `<div class="slide">${fotoSf}</div><span class="slide-tag">Foto</span>`;
-  } else {
-    content = idx===0
-      ? `<div class="slide">${buildingSvg(e.variant,true)}</div><span class="slide-tag">Ilustracao</span>`
-      : `<div class="slide-placeholder">${I.cloud}<span>Foto real ainda nao enviada<br>Envie uma foto para exibir aqui</span></div>`;
-  }
-  return `
-    <div class="emp-gallery">
-      ${content}
-      <button class="gal-nav gal-prev" onclick="galeriaGo('${e.id}',-1,${total})" aria-label="Foto anterior"><span style="display:flex; transform:scaleX(-1);">${I.chevron}</span></button>
-      <button class="gal-nav gal-next" onclick="galeriaGo('${e.id}',1,${total})" aria-label="Proxima foto">${I.chevron}</button>
-      <div class="gal-dots">${Array.from({length:total}).map((_,i)=>`<i class="${i===idx?'on':''}"></i>`).join('')}</div>
-    </div>
-  `;
-}
-function galeriaGo(id, dir, total){
-  const cur = state.galeria[id] || 0;
-  state.galeria[id] = (cur + dir + total) % total;
-  render();
-}
 /* capa do empreendimento na LISTA: foto mock (PHOTOS) > foto de capa que ja vem na lista
    (fotoUrl) > primeira foto real da galeria (Salesforce Files do empreendimento, que so' vem no
    detalhe - carregado em segundo plano, uma vez por empreendimento, e reaproveitado quando o
@@ -2591,60 +1847,6 @@ function screenBuscaImoveis(){
   const action = state.pdfSelecao.length ? `<button class="iconbtn" onclick="go('propostaResumo',{})" aria-label="Ver proposta">${I.contract}<span style="font-size:10px; font-weight:700; margin-left:2px;">${state.pdfSelecao.length}</span></button>` : '';
   return {title:'Buscar imoveis', back:false, action, body};
 }
-function screenEmpList(){
-  if(!state.sfEmpreendimentosLoaded){
-    return {title:'Empreendimentos', back:false, body:`
-      <div class="sync-row" style="margin-top:40px;"><span class="spinner"></span> Carregando empreendimentos do Salesforce...</div>
-    `};
-  }
-  if(state.sfEmpreendimentosError){
-    return {title:'Empreendimentos', back:false, body:`
-      <div class="alert-card"><span>${I.alert}</span><div><b>Nao foi possivel carregar</b><div class="muted" style="font-size:12.5px;">${state.sfEmpreendimentosError}</div></div></div>
-      <button class="btn btn-secondary" onclick="sfCarregarEmpreendimentos()">Tentar novamente</button>
-    `};
-  }
-  if(state.buscaModo) return screenBuscaImoveis();
-  const q = state.filters.empQuery.toLowerCase();
-  const list = DB.emps.filter(e=> (e.nome+e.cidade).toLowerCase().includes(q));
-  const body = `
-    ${empModoTabs()}
-    <div class="search-wrap">${I.search}<input id="empSearch" placeholder="Buscar por nome ou cidade" value="${state.filters.empQuery}" oninput="state.filters.empQuery=this.value; render()"></div>
-    <div class="stack">
-      ${list.map(e=>`
-        <button class="card" style="text-align:left; padding:0; overflow:hidden; width:100%; cursor:pointer;" onclick="go('empDetail',{id:'${e.id}'})">
-          <div class="emp-banner">${empCapaBanner(e)}</div>
-          <div style="padding:13px 14px;">
-            <div style="display:flex; justify-content:space-between; align-items:flex-start; gap:8px;">
-              <div style="font-weight:700; font-size:14.5px;">${e.nome}</div>
-              <span class="badge ${e.status==='Pronto para morar'?'badge-available':'badge-reserved'}">${e.status}</span>
-            </div>
-            <div class="muted" style="font-size:12px; margin:2px 0 10px;">${[e.bairro, e.cidade].filter(Boolean).join(', ')}</div>
-            <div class="progressbar"><i style="width:${e.vendidoPct}%"></i></div>
-            <div class="muted" style="font-size:11px; margin-top:5px;">${e.vendidoPct}% vendido - ${e.unidadesDisponiveis} unidades disponiveis</div>
-          </div>
-        </button>
-      `).join('')}
-    </div>
-  `;
-  const action = state.pdfSelecao.length ? `<button class="iconbtn" onclick="go('propostaResumo',{})" aria-label="Ver proposta">${I.contract}<span style="font-size:10px; font-weight:700; margin-left:2px;">${state.pdfSelecao.length}</span></button>` : '';
-  return {title:'Empreendimentos', back:false, action, body};
-}
-/* grade de comodidades do empreendimento (piscina, academia, playground...) - so aparece
-   quando o empreendimento tem alguma comodidade cadastrada (ver DB.emps[].comodidades) */
-function amenityGrid(e){
-  const keys = e.comodidades || [];
-  if(!keys.length) return '';
-  return `
-    <div class="section-title">Comodidades</div>
-    <div class="amenity-grid">
-      ${keys.map(k=>{
-        const a = AMENITIES[k];
-        if(!a) return '';
-        return `<div class="amenity-item"><div class="amenity-ic">${a.icon}</div><span>${a.label}</span></div>`;
-      }).join('')}
-    </div>
-  `;
-}
 /* "Blocos" (selecao de Torre) + "Tabelas de Venda Disponiveis" + "Estoque Comercial" - mesma
    organizacao e mesmos 3 blocos que o painel de controle do unidadeMapaEspelho real mostra no
    topo do Espelho de Vendas (pedido do Denis: espelhar essa estrutura, nao so os dados soltos
@@ -2718,54 +1920,6 @@ function estoquePills(e, filter){
     </div>
   `;
 }
-function screenEmpDetail(id){
-  const e = empById(id);
-  const filter = state.filters.unitFilter;
-  const carregado = !!state.sfDetalhesCarregados[id];
-  if(!carregado) sfCarregarDetalheEmpreendimento(id);
-  const torres = [...new Set(DB.units.filter(u=>u.empId===id).map(u=>u.torre))].sort();
-  const torreAtiva = state.filters.torreAtivaPorEmp[id] && torres.includes(state.filters.torreAtivaPorEmp[id])
-    ? state.filters.torreAtivaPorEmp[id] : torres[0];
-  const unidadesSection = !carregado
-    ? `<div class="sync-row" style="margin-top:18px;"><span class="spinner"></span> Carregando unidades...</div>`
-    : (torreAtiva!=null ? torreSection(id, torreAtiva, filter, state.filters.unitSearch) : emptyState('Nenhuma unidade cadastrada ainda', I.building));
-  const body = `
-    ${empGallery(e)}
-    <div style="display:flex; justify-content:space-between; align-items:flex-start; gap:8px;">
-      <h2 style="margin:0; font-size:19px;">${e.nome}</h2>
-      <span class="badge ${e.status==='Pronto para morar'?'badge-available':'badge-reserved'}">${e.status}</span>
-    </div>
-    <div class="muted" style="font-size:13px; margin:4px 0 14px;">${[e.bairro, e.cidade, e.entrega].filter(Boolean).join(' - ')}</div>
-    <p style="font-size:13.5px;">${e.descricao}</p>
-    <div class="stats-row" style="margin:16px 0 4px;">
-      <div class="stat-tile"><div class="n mono">${e.torres}</div><div class="l">${e.isVertical===false?'Blocos':'Torres'}</div></div>
-      <div class="stat-tile"><div class="n mono">${e.totalUnidades}</div><div class="l">Unidades</div></div>
-      <div class="stat-tile"><div class="n mono">${e.vendidoPct}%</div><div class="l">Vendido</div></div>
-    </div>
-    ${amenityGrid(e)}
-
-    ${blocosSelector(id, torres, torreAtiva)}
-
-    ${tabelasVendasCards(e)}
-
-    ${estoquePills(e, filter)}
-
-    <div class="section-title" style="display:flex; align-items:center; justify-content:space-between; gap:8px;">
-      <span>Unidades</span>
-      <button class="btn-ghost" style="padding:4px 2px; font-size:12.5px; width:auto;" onclick="pdfToggleModoSelecao()">${state.pdfModoSelecao?'Cancelar selecao':'Selecionar p/ proposta'}</button>
-    </div>
-    ${state.pdfSelecao.length? `
-      <div class="list-card" style="cursor:default; margin-bottom:14px; background:var(--chrome-bg); border:none;">
-        <div style="flex:1; min-width:0;"><b style="color:var(--chrome-text);">${state.pdfSelecao.length} unidade${state.pdfSelecao.length>1?'s':''} selecionada${state.pdfSelecao.length>1?'s':''}</b></div>
-        <button class="btn btn-primary" style="width:auto; padding:8px 14px; flex:0 0 auto;" onclick="go('propostaResumo',{})">Ver proposta</button>
-      </div>
-    ` : ''}
-    <div class="search-wrap" style="margin-bottom:12px;">${I.search}<input id="unitSearch" placeholder="Buscar unidade por codigo" value="${state.filters.unitSearch}" oninput="state.filters.unitSearch=this.value; render()"></div>
-    ${unidadesSection}
-  `;
-  const action = state.pdfSelecao.length ? `<button class="iconbtn" onclick="go('propostaResumo',{})" aria-label="Ver proposta"><span style="font-size:11px; font-weight:700;">${state.pdfSelecao.length}</span></button>` : '';
-  return {title:e.nome, back:true, action, body};
-}
 function torreSection(empId, torre, filter, search){
   const todas = DB.units.filter(u=>u.empId===empId && u.torre===torre);
   const porStatus = filter==='todas' ? todas : todas.filter(u=>u.status===filter);
@@ -2789,94 +1943,6 @@ function torreSection(empId, torre, filter, search){
       ${units.length? `<div class="unit-grid">${units.map(unitTile).join('')}</div>` : emptyState(termo?'Nenhuma unidade encontrada':'Nenhuma unidade nessa categoria', I.building)}
     </div>
   `;
-}
-/* card com o mesmo visual do "quadradinho" real do Mapa de Disponibilidade (unidadeMapaEspelho):
-   codigo -> tipo -> preco -> metragem+suites, fundo solido por status, texto branco. */
-function unitTile(u){
-  const cls = unitStatusInfo(u.status)[0];
-  const tipo = u.horizontal ? 'Lote' : 'Apartamento';
-  const meta = u.horizontal
-    ? `${u.metragem}m²`
-    : `${u.metragem}m²${u.suite?` · ${u.suite} suíte${u.suite>1?'s':''}`:''}`;
-  const modoSelecao = state.pdfModoSelecao && u.status==='disponivel';
-  const selecionado = state.pdfSelecao.includes(u.id);
-  const onclick = state.pdfModoSelecao
-    ? (u.status==='disponivel' ? `pdfToggleUnidade('${u.id}')` : `toast('So e possivel incluir unidades disponiveis na proposta')`)
-    : `onUnitTap('${u.id}')`;
-  return `
-    <button class="unit-tile ${cls} ${selecionado?'selected':''}" onclick="${onclick}">
-      <div class="top">
-        <span class="code">${unitCode(u)}</span>
-        ${u.status==='bloqueada'? `<span class="lock">${I.lock}</span>` : ''}
-        ${modoSelecao? `<span class="select-dot ${selecionado?'on':''}">${selecionado?I.check:''}</span>` : ''}
-      </div>
-      <p class="tipo">${tipo}</p>
-      <p class="price">${brl(u.valor)}</p>
-      <p class="meta">${meta}</p>
-    </button>`;
-}
-function onUnitTap(id){
-  const u = unitById(id);
-  if(u.status!=='disponivel'){
-    toast(u.status==='reservada' ? 'Unidade ja reservada' : u.status==='bloqueada' ? 'Unidade bloqueada - nao disponivel para reserva' : 'Unidade ja vendida');
-    return;
-  }
-  go('unidadeDetail',{id});
-}
-/* ---------- SELECAO DE UNIDADES PARA PROPOSTA (PDF) ---------- */
-function pdfToggleModoSelecao(){
-  state.pdfModoSelecao = !state.pdfModoSelecao;
-  render();
-}
-function pdfToggleUnidade(unitId){
-  const idx = state.pdfSelecao.indexOf(unitId);
-  if(idx>=0) state.pdfSelecao.splice(idx,1);
-  else state.pdfSelecao.push(unitId);
-  render();
-}
-function pdfRemoverUnidade(unitId){
-  state.pdfSelecao = state.pdfSelecao.filter(id=>id!==unitId);
-  render();
-}
-function pdfLimparSelecao(){
-  state.pdfSelecao = [];
-  state.pdfModoSelecao = false;
-  goBack();
-}
-function screenPropostaResumo(){
-  const unidades = state.pdfSelecao.map(id=>unitById(id)).filter(Boolean);
-  if(!unidades.length){
-    return {title:'Proposta', back:true, body: emptyState('Nenhuma unidade selecionada ainda - va num Empreendimento e toque em "Selecionar p/ proposta"', I.contract)};
-  }
-  const porEmp = {};
-  unidades.forEach(u=>{ (porEmp[u.empId] = porEmp[u.empId]||[]).push(u); });
-  const total = unidades.reduce((s,u)=>s+(u.valor||0),0);
-  const body = `
-    <div class="price-hero" style="margin-top:0;">
-      <div class="label">Valor total da proposta</div>
-      <div class="amount">${brl(total)}</div>
-    </div>
-    ${Object.keys(porEmp).map(empId=>{
-      const e = empById(empId);
-      return `
-        <div class="section-title">${e.nome}</div>
-        <div class="stack" style="margin-bottom:8px;">
-          ${porEmp[empId].map(u=>`
-            <div class="list-card" style="cursor:default;">
-              <div style="flex:1; min-width:0;">
-                <div style="font-weight:600; font-size:13.5px;">${unitCode(u)}</div>
-                <div class="muted" style="font-size:11.5px;">${u.metragem}m²${u.suite?' · '+u.suite+' suites':''} - ${brl(u.valor)}</div>
-              </div>
-              <button class="list-remove" onclick="pdfRemoverUnidade('${u.id}')" aria-label="Remover">${I.close}</button>
-            </div>
-          `).join('')}
-        </div>
-      `;
-    }).join('')}
-    <button class="btn btn-secondary" style="margin-top:10px;" onclick="pdfLimparSelecao()">Limpar selecao</button>
-    <button class="btn btn-primary" style="margin-top:10px;" ${state.pdfGerando?'disabled':''} onclick="gerarPropostaPDF()">${state.pdfGerando?'Preparando PDF...':I.check+' Gerar PDF da proposta'}</button>
-  `;
-  return {title:'Proposta ('+unidades.length+')', back:true, body};
 }
 /* monta o documento imprimivel (capa + 1 pagina por empreendimento com fotos/comodidades + 1
    pagina por unidade com planta e simulacao de pagamento real) e aciona a impressao nativa do
@@ -3004,150 +2070,7 @@ function unitPlantaBlock(u){
   }
   return plantaSvg(u.dorm);
 }
-function screenUnidadeDetail(id){
-  const u = unitById(id);
-  const e = empById(u.empId);
-  const body = `
-    <div class="card" style="padding:16px; margin-bottom:14px;">${unitPlantaBlock(u)}</div>
-    <div style="display:flex; justify-content:space-between; align-items:center;">
-      <div>
-        <div class="eyebrow">${e.nome}</div>
-        <h2 style="margin:2px 0 0; font-size:19px;">Unidade ${unitCode(u)}</h2>
-      </div>
-      ${statusBadge(u.status)}
-    </div>
 
-    <div class="stats-row" style="margin:16px 0;">
-      <div class="stat-tile"><div class="n mono">${u.dorm}</div><div class="l">Dormitorios</div></div>
-      <div class="stat-tile"><div class="n mono">${u.metragem}</div><div class="l">m2 privativos</div></div>
-      <div class="stat-tile"><div class="n mono">${u.vaga}</div><div class="l">Vaga(s)</div></div>
-    </div>
-
-    <div class="kv-table">
-      ${u.horizontal
-        ? `<div class="kv-row"><span class="k">Bloco</span><span class="v">${u.torre}</span></div>`
-        : `<div class="kv-row"><span class="k">Torre / andar</span><span class="v">${u.torre} - ${u.andar}o</span></div>`}
-      <div class="kv-row"><span class="k">Suites</span><span class="v">${u.suite}</span></div>
-      <div class="kv-row"><span class="k">Situacao da obra</span><span class="v" style="font-family:inherit; font-weight:500;">${e.status}</span></div>
-    </div>
-
-    <div class="price-hero">
-      <div class="label">Valor da unidade</div>
-      <div class="amount">${brl(u.valor)}</div>
-    </div>
-
-    ${u.status==='disponivel'
-      ? `<button class="btn btn-primary" onclick="startWizard('${u.id}')">Iniciar reserva</button>`
-      : `<button class="btn btn-secondary" disabled>${u.status==='reservada'?'Unidade reservada':u.status==='bloqueada'?'Unidade bloqueada':'Unidade vendida'}</button>`}
-  `;
-  return {title:'Unidade', back:true, body};
-}
-
-/* ---------- RESERVAS (lista/detalhe) ---------- */
-function screenResList(){
-  const body = DB.reservas.length ? `<div class="stack">${DB.reservas.map(resCard).join('')}</div>` : emptyState('Nenhuma reserva ainda', I.emptyDoc);
-  return {title:'Reservas', back:false, body};
-}
-function resCard(r){
-  const nome = resNomeCliente(r);
-  return `
-    <button class="list-card" onclick="go('resDetail',{id:'${r.id}'})">
-      <div class="avatar">${initials(nome)}</div>
-      <div style="flex:1; min-width:0;">
-        <div style="font-weight:600; font-size:14px;">${nome}</div>
-        <div class="muted" style="font-size:12px;">${resNomeEmpreendimento(r)} - ${resNomeUnidade(r)}</div>
-      </div>
-      <span class="badge ${r.status==='Assinada'?'badge-available':'badge-reserved'}">${r.status}</span>
-    </button>`;
-}
-function screenResDetail(id){
-  const r = reservaById(id);
-  const nome = resNomeCliente(r), unidadeNome = resNomeUnidade(r), empNome = resNomeEmpreendimento(r);
-  /* r.series vem do Fluxo de Pagamento real (CA_RestReservas.doGet); r.pagamentos e' o formato
-     antigo, mocado, so preenchido em memoria na hora que o wizard confirma (some ao recarregar
-     a aba - por isso a serie real tem prioridade quando existe). */
-  const seriePagamentosItems = (r.series && r.series.length)
-    ? r.series.map(s=>({tipo:s.tipo, parcelas:s.parcelas, periodicidade: s.primeiroVencimento ? ('a partir de '+fmtDataBR(s.primeiroVencimento)) : '', valor:s.valor}))
-    : (r.pagamentos || []);
-  /* andamento real (conta reais): "Documentacao em analise" = Cotacao criada (SyncedQuoteId),
-     "Aprovacao da incorporadora" = Oportunidade chegou em "Confeccao de contrato" ou depois
-     (mesma progressao de estagios que ReservasService.ESTAGIOS_QUE_EXIGEM_RESERVA_ATIVA ja usa -
-     inclui passar pelo estagio real "Aguardando Aprovacoes"), "Contrato assinado" = estagio
-     "Contrato assinado" em diante. Mock continua com o status binario antigo (Ativa/Assinada). */
-  const steps = r.real ? [
-    {label:'Reserva criada', done:true, when:r.data},
-    {label:'Documentacao em analise', done:r.documentacaoEmAnalise, when: r.documentacaoEmAnalise ? 'concluido' : 'pendente'},
-    {label:'Aprovacao da incorporadora', done:r.aprovadoIncorporadora, when: r.aprovadoIncorporadora ? 'concluido' : 'pendente'},
-    {label:'Contrato assinado', done:r.contratoAssinado, when: r.contratoAssinado ? 'concluido' : 'pendente'},
-  ] : [
-    {label:'Reserva criada', done:true, when:r.data},
-    {label:'Documentacao em analise', done:true, when: r.status==='Em analise' ? 'em andamento' : r.data},
-    {label:'Aprovacao da incorporadora', done:r.status==='Assinada', when: r.status==='Assinada' ? r.data : 'pendente'},
-    {label:'Contrato assinado', done:r.status==='Assinada', when: r.status==='Assinada' ? r.data : 'pendente'},
-  ];
-  const body = `
-    <div class="card" style="padding:14px; margin-bottom:16px;">
-      <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px;">
-        <span class="eyebrow mono">${r.protocolo}</span>
-        <span class="badge ${r.status==='Assinada'?'badge-available':'badge-reserved'}">${r.status}</span>
-      </div>
-      <div style="font-weight:700; font-size:15.5px;">${nome}</div>
-      <div class="muted" style="font-size:12.5px; margin-top:2px;">${empNome} - Unidade ${unidadeNome}</div>
-    </div>
-
-    <div class="kv-table" style="margin-bottom:18px;">
-      <div class="kv-row"><span class="k">Valor do imovel</span><span class="v">${brl(r.valor)}</span></div>
-      <div class="kv-row"><span class="k">Data da reserva</span><span class="v">${r.data}</span></div>
-    </div>
-
-    ${seriePagamentosItems.length ? `
-    <div class="section-title" style="margin-top:0;">Serie de pagamentos</div>
-    <div class="stack" style="margin-bottom:18px;">
-      ${seriePagamentosItems.map(p=>`
-        <div class="list-card" style="cursor:default;">
-          <div style="flex:1;">
-            <div style="font-weight:600; font-size:13.5px;">${p.tipo}</div>
-            <div class="muted" style="font-size:11.5px;">${p.parcelas>1?p.parcelas+'x ':''}${p.periodicidade}${p.quando?' - '+p.quando:''}</div>
-          </div>
-          <div class="mono" style="font-weight:600; font-size:13.5px;">${brl(p.valor)}</div>
-        </div>
-      `).join('')}
-    </div>` : ''}
-
-    <div class="section-title">Andamento</div>
-    <div class="timeline">
-      ${steps.map(s=>`
-        <div class="tl-item">
-          <div class="tl-dot-wrap"><div class="tl-dot ${s.done?'done':''}"></div><div class="tl-line"></div></div>
-          <div class="tl-body"><b>${s.label}</b><span>${s.when}</span></div>
-        </div>`).join('')}
-    </div>
-
-    ${r.real ? `
-      ${r.temCotacao ? `
-        <div class="sync-row" style="color:var(--status-available); margin-top:6px;">${I.check} Cotacao criada no Salesforce</div>
-      ` : `
-        <button class="btn btn-primary" style="margin-top:6px;" ${r.criandoCotacao?'disabled':''} onclick="criarCotacaoDaReserva('${r.id}')">
-          ${r.criandoCotacao? '<span class="spinner"></span> Criando Cotacao...' : 'Criar Cotacao'}
-        </button>
-      `}
-      ${r.termoContentVersionId ? `
-        <button class="btn btn-secondary" style="margin-top:8px;" onclick="sfAbrirPdf('${r.termoContentVersionId}')">Ver termo de reserva</button>
-      ` : `
-        <button class="btn btn-secondary" style="margin-top:8px;" ${r.gerandoTermo?'disabled':''} onclick="sfGerarTermoReserva('${r.id}')">
-          ${r.gerandoTermo ? '<span class="spinner"></span> Gerando termo...' : 'Gerar termo de reserva'}
-        </button>
-      `}
-      ${r.negociacaoId ? `
-        <button class="btn btn-secondary" style="margin-top:8px;" onclick="switchTab('negocios'); go('negocioDetail',{id:'${r.negociacaoId}'})">Ver negocio completo</button>
-      ` : ''}
-      <a class="btn btn-secondary" style="margin-top:8px; display:block; text-align:center;" href="${(sfSessionGet()||{}).instanceUrl}/lightning/r/CA_Reserva__c/${r.id}/view" target="_blank" rel="noopener">Abrir no Salesforce</a>
-    ` : `
-      <button class="btn btn-secondary" style="margin-top:6px;" onclick="toast('Disponivel na versao conectada ao Salesforce')">Abrir no Salesforce</button>
-    `}
-  `;
-  return {title: r.status==='Assinada' ? 'Contrato' : 'Reserva', back:true, body};
-}
 /* cria a Cotacao real (CA_RestReservas PATCH -> ReservasService.criarCotacaoEDesconto) a partir
    de uma reserva feita pelo app - mesmo passo 2 que o Simulador de Vendas real faz automatico
    quando a reserva e feita de dentro do Salesforce. */
@@ -3321,121 +2244,9 @@ function sfAvancarStatusContrato(contratoId, negocioId){
       toast('Nao foi possivel atualizar o status: '+e.message);
     });
 }
-/* card de 1 Contract dentro da secao "Contrato" do Negocio - tipo/status, datas de
-   envio/assinatura (quando preenchidas) e as acoes disponiveis pro status atual. */
-function contratoCard(c, negocioId){
-  /* mesmo tratamento de null->'Nao enviado' de sfAvancarStatusContrato, so' pra exibicao aqui. */
-  const statusAssinatura = c.statusAssinatura || 'Não enviado';
-  return `
-    <div class="card" style="padding:14px;">
-      <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px; gap:8px;">
-        <span style="font-weight:700; font-size:13.5px;">${c.tipo || 'Contrato'}</span>
-        <span class="badge ${statusAssinatura==='Assinado'?'badge-available':'badge-blue'}">${statusAssinatura}</span>
-      </div>
-      ${(c.dataEnvioAssinatura || c.dataAssinatura) ? `
-        <div class="kv-table" style="margin-bottom:10px;">
-          ${c.dataEnvioAssinatura ? `<div class="kv-row"><span class="k">Enviado para assinatura</span><span class="v">${sfDataHora(c.dataEnvioAssinatura)}</span></div>` : ''}
-          ${c.dataAssinatura ? `<div class="kv-row"><span class="k">Assinado em</span><span class="v">${sfDataHora(c.dataAssinatura)}</span></div>` : ''}
-        </div>
-      ` : ''}
-      <div class="btn-row">
-        ${!c.contentVersionId
-          ? `<button class="btn btn-primary" style="width:auto; padding:7px 12px; font-size:12.5px;" ${c.gerandoPdf?'disabled':''} onclick="sfGerarPdfContrato('${c.id}','${negocioId}')">${c.gerandoPdf?'<span class="spinner"></span> Gerando...':'Gerar PDF do contrato'}</button>`
-          : `<button class="btn btn-secondary" style="width:auto; padding:7px 12px; font-size:12.5px;" onclick="sfAbrirPdf('${c.contentVersionId}')">Ver PDF do contrato</button>`}
-        ${statusAssinatura==='Não enviado'
-          ? `<button class="btn btn-secondary" style="width:auto; padding:7px 12px; font-size:12.5px;" ${c.atualizandoStatus?'disabled':''} onclick="sfAvancarStatusContrato('${c.id}','${negocioId}')">Enviar para assinatura</button>`
-          : statusAssinatura==='Enviado para assinatura'
-            ? `<button class="btn btn-secondary" style="width:auto; padding:7px 12px; font-size:12.5px;" ${c.atualizandoStatus?'disabled':''} onclick="sfAvancarStatusContrato('${c.id}','${negocioId}')">Marcar como assinado</button>`
-            : ''}
-      </div>
-    </div>
-  `;
-}
-/* secao "Contrato" do Negocio - substitui o texto estatico antigo (contratoStatus/
-   contratoStatusAssinatura, so leitura) por acao de verdade: gerar PDF, ver PDF, avancar
-   assinatura. undefined = ainda nao pediu (sfCarregarContratosNegocio dispara), null = buscando. */
-function negocioContratoSection(n){
-  const contratos = state.sfContratosNegocio[n.id];
-  return `
-    <div class="section-title" style="margin-top:0;">Contrato</div>
-    ${contratos == null
-      ? `<div class="sync-row" style="margin-bottom:18px;"><span class="spinner"></span> Carregando contrato...</div>`
-      : contratos.length
-        ? `<div class="stack" style="margin-bottom:18px;">${contratos.map(c=>contratoCard(c, n.id)).join('')}</div>`
-        : `<div style="margin-bottom:18px;">${emptyState('Nenhum contrato gerado ainda para esse negocio', I.contract)}</div>`}
-  `;
-}
-function screenNegociosList(){
-  if(!state.sfNegociosLoaded) sfCarregarNegocios();
-  const body = !state.sfNegociosLoaded
-    ? `<div class="sync-row"><span class="spinner"></span> Carregando negocios...</div>`
-    : DB.negocios.length
-      ? `<div class="stack">${DB.negocios.map(negocioCard).join('')}</div>`
-      : emptyState('Nenhum negocio ainda', I.emptyDoc);
-  return {title:'Negocios', back:false, body};
-}
 function negocioStageBadgeClass(n){
   if(n.fechada) return n.ganha ? 'badge-available' : 'badge-sold';
   return 'badge-blue';
-}
-function negocioCard(n){
-  return `
-    <button class="list-card" onclick="go('negocioDetail',{id:'${n.id}'})">
-      <div style="flex:1; min-width:0;">
-        <div style="font-weight:600; font-size:13.5px;">${n.clienteNome || n.nome}</div>
-        <div class="muted" style="font-size:11.5px;">${n.empreendimentoNome ? n.empreendimentoNome+' - '+negocioUnidadeCurta(n) : (n.unidadeNome||'-')}</div>
-      </div>
-      <div style="display:flex; flex-direction:column; align-items:flex-end; gap:4px; flex:0 0 auto;">
-        ${n.valor ? `<div class="mono" style="font-weight:600; font-size:13px;">${brl(n.valor)}</div>` : ''}
-        <span class="badge ${negocioStageBadgeClass(n)}">${n.stageName}</span>
-      </div>
-    </button>
-  `;
-}
-function screenNegocioDetail(id){
-  sfCarregarNegocioDetalhe(id);
-  sfCarregarContratosNegocio(id);
-  const n = negocioById(id);
-  if(!n){
-    return {title:'Negocio', back:true, body:`<div class="sync-row"><span class="spinner"></span> Carregando...</div>`};
-  }
-  const linha = n.linhaDoTempo || [];
-  const body = `
-    <div class="card" style="padding:14px; margin-bottom:16px;">
-      <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px;">
-        <span class="eyebrow mono">${n.nome||''}</span>
-        <span class="badge ${negocioStageBadgeClass(n)}">${n.stageName||''}</span>
-      </div>
-      <div style="font-weight:700; font-size:15.5px;">${n.clienteNome||'-'}</div>
-      ${n.empreendimentoNome ? `<div class="muted" style="font-size:12.5px; margin-top:2px;">${n.empreendimentoNome} - Unidade ${negocioUnidadeCurta(n)}</div>` : ''}
-    </div>
-
-    ${(n.valor || n.dataFechamento || n.casoCreditoStatus || n.casoJuridicoStatus) ? `
-      <div class="kv-table" style="margin-bottom:18px;">
-        ${n.valor ? `<div class="kv-row"><span class="k">Valor</span><span class="v">${brl(n.valor)}</span></div>` : ''}
-        ${n.dataFechamento ? `<div class="kv-row"><span class="k">Previsao de fechamento</span><span class="v">${fmtDataBR(String(n.dataFechamento).slice(0,10))}</span></div>` : ''}
-        ${n.casoCreditoStatus ? `<div class="kv-row"><span class="k">Analise de credito</span><span class="v" style="font-family:inherit; font-weight:500;">${n.casoCreditoStatus}</span></div>` : ''}
-        ${n.casoJuridicoStatus ? `<div class="kv-row"><span class="k">Juridico</span><span class="v" style="font-family:inherit; font-weight:500;">${n.casoJuridicoStatus}</span></div>` : ''}
-      </div>
-    ` : ''}
-
-    ${negocioContratoSection(n)}
-
-    <div class="section-title">Andamento</div>
-    <div class="timeline">
-      ${linha.map(p=>`
-        <div class="tl-item">
-          <div class="tl-dot-wrap"><div class="tl-dot ${p.status==='concluido'?'done':''} ${p.status==='atual'?'atual':''}"></div><div class="tl-line"></div></div>
-          <div class="tl-body">
-            <b>${p.estagio}</b>
-            <span>${p.status==='concluido'?'Concluido':p.status==='atual'?'Em andamento':p.status==='nao_aplicavel'?'-':'Pendente'}${p.detalhe?' - '+p.detalhe:''}</span>
-          </div>
-        </div>`).join('')}
-    </div>
-
-    <a class="btn btn-secondary" style="margin-top:8px; display:block; text-align:center;" href="${(sfSessionGet()||{}).instanceUrl}/lightning/r/Opportunity/${n.id}/view" target="_blank" rel="noopener">Abrir no Salesforce</a>
-  `;
-  return {title:'Negocio', back:true, body};
 }
 
 /* ---------- AGENDAMENTO DE VISITA ----------
@@ -3482,7 +2293,7 @@ function screenVisitaForm(){
     <div class="field"><label for="vf-obs">Observacoes</label><textarea id="vf-obs" placeholder="Detalhes combinados com o cliente..."></textarea></div>
     <button class="btn btn-primary" ${!draft.leadId?'disabled':''} onclick="saveVisita()">${I.check} Confirmar agendamento</button>
   `;
-  return {title:'Agendar visita', back:true, body};
+  return {title:'Agendar visita', back:true, hideTab:true, sub:'Escolha o lead, a data e o local da visita.', body};
 }
 function saveVisita(){
   const draft = state.visitaDraft;
@@ -3530,60 +2341,7 @@ function cancelarVisita(id){
       toast('Nao foi possivel cancelar no Salesforce: '+e.message);
     });
 }
-function visitaCard(v){
-  const l = leadById(v.leadId);
-  return `
-    <button class="list-card" onclick="switchTab('leads'); go('leadDetail',{id:'${l.id}'})">
-      <div class="avatar">${initials(l.nome)}</div>
-      <div style="flex:1; min-width:0;">
-        <div style="font-weight:600; font-size:14px;">${l.nome}</div>
-        <div class="muted" style="font-size:12px;">${v.local||'Local a definir'}</div>
-      </div>
-      <div style="text-align:right; flex:0 0 auto;">
-        <div class="mono" style="font-weight:700; font-size:12.5px;">${fmtDataBR(v.data)}</div>
-        <div class="muted" style="font-size:11px;">${v.hora}</div>
-      </div>
-    </button>`;
-}
 
-/* ---------- WIZARD: Nova Reserva ---------- */
-function startWizard(unitId){
-  const u = unitById(unitId);
-  const e = empById(u.empId);
-  /* Tipo de Venda: so mostra o passo quando o Empreendimento real tem mais de 1 Tipo
-     habilitado (CA_Empreendimento__c.CA_TiposVendaHabilitados__c) - com 0 ou 1 so' resolve direto
-     ("Financiamento Direto" e' o fallback de sempre, igual ao comportamento antigo), sem pedir pro
-     corretor escolher algo que nao tem escolha real. */
-  const tiposHabilitados = (u.real && e && e.tiposVendaHabilitados && e.tiposVendaHabilitados.length) ? e.tiposVendaHabilitados : [];
-  state.mode = 'wizard';
-  state.wizard = {
-    step:1, unitId, empId:u.empId,
-    clienteId: state.context.preselectCliente || null,
-    negociacaoEscolha: null,
-    novoClienteMode:false,
-    pagamentos:[],
-    tabelaId:null, seriesEditor:null, tabelaOficialAberta:false,
-    tiposVendaHabilitados: tiposHabilitados,
-    tipoVenda: tiposHabilitados.length>1 ? null : (tiposHabilitados[0] || 'Financiamento Direto'),
-    motivo:'',
-    obs:'',
-    aceite:false,
-    protocolo:null,
-    syncing:false,
-    erro:null,
-  };
-  state.context.preselectCliente = null;
-  render({resetScroll:true});
-  if(state.wizard.clienteId){ sfCarregarContaDetalhe(state.wizard.clienteId).then(()=>render()); }
-}
-function wizardBack(){
-  const w = state.wizard;
-  if(w.novoClienteMode){ w.novoClienteMode=false; render({resetScroll:true}); return; }
-  if(w.erro){ w.erro = null; w.step = 4; render({resetScroll:true}); return; }
-  if(w.step>1){ w.step--; render({resetScroll:true}); return; }
-  state.mode='tabs'; state.wizard=null; render({resetScroll:true});
-}
-function wizardGoto(step){ state.wizard.step = step; render({resetScroll:true}); }
 function wizardSelectCliente(id){
   const w = state.wizard;
   w.clienteId = id;
@@ -3726,23 +2484,6 @@ function wizardSelecionarTipoVenda(tipo){
   state.wizard.tipoVenda = tipo;
   wizardGoto(3);
 }
-function wizardTipoVendaBody(tipos){
-  return `
-    <div class="section-title" style="margin-top:0;">Como o cliente vai pagar?</div>
-    <div class="stack">
-      ${tipos.map(t=>`
-        <button class="list-card" onclick="wizardSelecionarTipoVenda('${t}')">
-          <div class="ic-badge" style="width:34px; height:34px; border-radius:9px; background:var(--surface-2); display:flex; align-items:center; justify-content:center; color:var(--accent); flex:0 0 auto;">${I.calendar}</div>
-          <div style="flex:1; min-width:0;">
-            <div style="font-weight:600; font-size:13.5px;">${t}</div>
-            <div class="muted" style="font-size:11.5px;">${TIPO_VENDA_DESCRICOES[t]||''}</div>
-          </div>
-          <span class="list-card-chevron">${I.chevron}</span>
-        </button>
-      `).join('')}
-    </div>
-  `;
-}
 /* monta as linhas editaveis da serie a partir da composicao padrao da tabela - o valor de cada
    parcela vem do PRECO REAL da unidade (nao da tabela em si, que so' presta a estrutura/%). */
 function wizardSelecionarTabela(tabelaId){
@@ -3816,194 +2557,6 @@ function wizardSerieSanidadeOk(){
     if((l.valor||0) > 0 && (!l.quantidade || l.quantidade <= 0)) return false;
   }
   return true;
-}
-/* Diferenca Tabela x Proposta - preview client-side calculado com a MESMA formula que o Apex usa
-   (ReservasService.criarFluxoPagamentoDaTabela): valor da unidade x percentual ORIGINAL da tabela
-   (a composicao oficial, tabela.series), comparado contra o que o corretor efetivamente montou
-   (seriesEditor). O numero OFICIAL de verdade continua sendo calculado so' no Apex. */
-function calcularDiferencaTabelaProposta(u, tabela, seriesEditor){
-  const totalTabela = tabela.series.reduce((s,x)=> s + (u.valor * (x.percentual||0) / 100), 0);
-  const totalProposta = (seriesEditor||[]).reduce((s,l)=>s+(l.quantidade*l.valor),0);
-  const diferenca = totalProposta - totalTabela;
-  const diferencaPerc = totalTabela>0 ? (diferenca/totalTabela*100) : 0;
-  return {totalTabela, totalProposta, diferenca, diferencaPerc};
-}
-/* markup do bloco "Tabela x Proposta" (kv-table + alerta de alcada quando diferenca>10%). */
-function diferencaTabelaPropostaBody(u, tabela, seriesEditor){
-  const {totalTabela, totalProposta, diferenca, diferencaPerc} = calcularDiferencaTabelaProposta(u, tabela, seriesEditor);
-  const diffColor = diferenca>0 ? 'var(--status-reserved)' : diferenca<0 ? 'var(--status-sold)' : 'var(--status-available)';
-  return `
-    <div class="kv-table" style="margin-bottom:14px;">
-      <div class="kv-row"><span class="k">Total da Tabela</span><span class="v">${brl(totalTabela)}</span></div>
-      <div class="kv-row"><span class="k">Total da Proposta</span><span class="v">${brl(totalProposta)}</span></div>
-      <div class="kv-row"><span class="k">Diferença</span><span class="v" style="color:${diffColor};">${brl(diferenca)} (${diferencaPerc.toFixed(1)}%)</span></div>
-    </div>
-    ${Math.abs(diferencaPerc)>10 ? `<div class="alert-card warn" style="margin-bottom:14px;">${I.alert}<div><b>Acima da alçada do corretor</b><div class="muted" style="font-size:12px; margin-top:2px;">Diferença maior que 10% - vai para aprovação do Gerente Comercial antes de virar a Cotação oficial.</div></div></div>` : ''}
-  `;
-}
-/* markup do fluxo manual antigo (Tipo/Valor/Parcelas/Periodicidade em texto livre) - extraido
-   pra uma funcao pra poder ser reaproveitado tanto pelo mock quanto por um empreendimento real
-   sem nenhuma Tabela de Vendas aprovada ainda (fallback, sem quebrar nada que ja funcionava). */
-function manualSerieBody(u, w){
-  const alocado = pagamentoAlocado(w.pagamentos);
-  const saldo = u.valor - alocado;
-  const saldoColor = saldo===0 ? 'var(--status-available)' : saldo>0 ? 'var(--status-reserved)' : 'var(--status-sold)';
-  const saldoLabel = saldo===0 ? 'Serie completa' : saldo>0 ? 'Falta alocar' : 'Excede o valor em';
-  return `
-    <div class="price-hero" style="margin-top:0;">
-      <div class="label">Valor do imovel</div>
-      <div class="amount">${brl(u.valor)}</div>
-    </div>
-
-    <div class="kv-table" style="margin-bottom:16px;">
-      <div class="kv-row"><span class="k">Ja alocado</span><span class="v">${brl(alocado)}</span></div>
-      <div class="kv-row"><span class="k">${saldoLabel}</span><span class="v" style="color:${saldoColor};">${brl(Math.abs(saldo))}</span></div>
-    </div>
-
-    ${w.pagamentos.length? `
-      <div class="section-title" style="margin-top:0;">Itens da serie</div>
-      <div class="stack" style="margin-bottom:18px;">
-        ${w.pagamentos.map((p,idx)=>`
-          <div class="list-card" style="cursor:default;">
-            <div style="flex:1;">
-              <div style="font-weight:600; font-size:13.5px;">${p.tipo}</div>
-              <div class="muted" style="font-size:11.5px;">${p.parcelas>1?p.parcelas+'x ':''}${p.periodicidade}${p.quando?' - '+p.quando:''}</div>
-            </div>
-            <div class="mono" style="font-weight:600; font-size:13.5px; margin-right:8px;">${brl(p.valor)}</div>
-            <button class="list-remove" onclick="wizardRemovePagamento(${idx})" aria-label="Remover item">${I.close}</button>
-          </div>
-        `).join('')}
-      </div>
-    ` : ''}
-
-    <div class="section-title" style="margin-top:0;">Adicionar pagamento</div>
-    <div class="field-row">
-      <div class="field"><label for="wp-tipo">Tipo</label>
-        <select id="wp-tipo">${TIPOS_PAGAMENTO.map(o=>`<option>${o}</option>`).join('')}</select>
-      </div>
-      <div class="field"><label for="wp-valor">Valor (R$)</label><input id="wp-valor" type="number" placeholder="0"></div>
-    </div>
-    <div class="field-row">
-      <div class="field"><label for="wp-parcelas">Parcelas</label><input id="wp-parcelas" type="number" min="1" value="1" oninput="onWizardParcelasInput()"></div>
-      <div class="field"><label for="wp-periodicidade">Periodicidade</label>
-        <select id="wp-periodicidade">${periodicidadeOptions(1).map(o=>`<option>${o}</option>`).join('')}</select>
-      </div>
-    </div>
-    <div class="field"><label for="wp-quando">Quando (opcional)</label><input id="wp-quando" placeholder="Ex: na entrega das chaves"></div>
-    <button class="btn btn-secondary" onclick="wizardAddPagamento()">${I.plus} Adicionar a serie</button>
-
-    <div class="btn-row" style="margin-top:18px;">
-      <button class="btn btn-primary" ${saldo!==0?'disabled':''} onclick="wizardGoto(4)">Continuar</button>
-    </div>
-    ${saldo!==0? `<p class="muted" style="font-size:11.5px; text-align:center; margin-top:8px;">A serie precisa somar exatamente o valor do imovel para continuar.</p>` : ''}
-  `;
-}
-/* escolha da Tabela de Vendas real (composicao de series fixa por tabela, aprovada no
-   Salesforce) - mesmo primeiro passo que o Espelho de Vendas real (unidadeMapaEspelho) usa. */
-function tabelaPickerBody(tabelas){
-  return `
-    <div class="section-title" style="margin-top:0;">Escolha a tabela de vendas</div>
-    <div class="stack">
-      ${tabelas.map(t=>`
-        <button class="list-card" onclick="wizardSelecionarTabela('${t.id}')">
-          <div class="ic-badge" style="width:34px; height:34px; border-radius:9px; background:var(--surface-2); display:flex; align-items:center; justify-content:center; color:var(--accent); flex:0 0 auto;">${I.calendar}</div>
-          <div style="flex:1; min-width:0;">
-            <div style="font-weight:600; font-size:13.5px;">${t.name}</div>
-            <div class="muted" style="font-size:11.5px;">${fmtDataBR(t.vigenciaDe)} a ${fmtDataBR(t.vigenciaAte)} - ${t.series.length} serie${t.series.length===1?'':'s'}</div>
-          </div>
-          <span class="list-card-chevron">${I.chevron}</span>
-        </button>
-      `).join('')}
-    </div>
-  `;
-}
-/* serie de pagamentos real, editavel - valor de cada parcela ja vem calculado a partir do
-   PRECO REAL da unidade (percentual da tabela x valor / quantidade, mesma formula do LWC real),
-   o corretor so' ajusta se quiser mudar quantidade/valor de alguma serie (ex: menos parcelas,
-   entrada maior). Nao precisa mais fechar exatamente no valor da unidade (ver wizardSerieSanidadeOk) -
-   a proposta pode divergir da tabela de proposito, e' isso que aciona (ou nao) a alcada de aprovacao.
-   Layout (pedido do Denis, com prints do padrao de outro cliente "Parcelamento e Comissionamento"):
-   DUAS tabelas na mesma tela - "Tabela de Vendas" oficial/travada (composicao original, tabela.series)
-   comecando recolhida (tela e' mobile, foco principal e' editar a proposta embaixo), e "Proposta do
-   Proponente" editavel (w.seriesEditor) - com a Diferenca entre as duas visivel ao vivo, sem
-   precisar ir pra tela de Revisao pra ver. */
-function serieEditorBody(u, w){
-  const alocado = wizardSerieAlocado();
-  const sanidadeOk = wizardSerieSanidadeOk();
-  const tabela = (state.sfTabelasVendasCache[w.empId]||[]).find(t=>t.id===w.tabelaId);
-  const aberta = !!w.tabelaOficialAberta;
-  return `
-    <div class="price-hero" style="margin-top:0;">
-      <div class="label">Valor do imovel</div>
-      <div class="amount">${brl(u.valor)}</div>
-    </div>
-
-    <button class="btn-ghost" style="font-size:12px; padding:6px 2px; margin-bottom:4px;" onclick="wizardTrocarTabela()">&larr; Trocar tabela de vendas</button>
-
-    ${tabela ? `
-      <div class="section-title" style="margin-top:0; display:flex; align-items:center; justify-content:space-between; cursor:pointer; user-select:none;" onclick="wizardToggleTabelaOficial()">
-        <span>${tabela.name || 'Tabela de Vendas'} (oficial)</span>
-        <span class="doc-chevron${aberta?' open':''}">${I.chevron}</span>
-      </div>
-      ${aberta ? `
-        <div class="stack" style="margin-bottom:14px;">
-          ${tabela.series.map(s=>{
-            const valorUnit = Math.round((u.valor * (s.percentual||0) / 100 / (s.quantidade||1)) * 100) / 100;
-            const totalSerie = u.valor * (s.percentual||0) / 100;
-            return `
-            <div class="list-card" style="cursor:default; flex-direction:column; align-items:stretch;">
-              <div style="display:flex; justify-content:space-between; align-items:baseline; margin-bottom:4px;">
-                <div style="font-weight:600; font-size:13.5px;">${s.nome}</div>
-                <div class="mono muted" style="font-size:11.5px;">${s.percentual}%</div>
-              </div>
-              <div class="muted" style="font-size:11.5px;">${s.quantidade>1?s.quantidade+'x de '+brl(valorUnit):'1x de '+brl(valorUnit)}</div>
-              <div class="muted" style="font-size:11.5px; text-align:right; margin-top:2px;">Total da serie: ${brl(totalSerie)}</div>
-            </div>
-          `;}).join('')}
-        </div>
-      ` : `<p class="muted" style="font-size:11.5px; margin:-2px 0 14px;">Toque para conferir os valores oficiais linha a linha - estes valores sao travados, nao editaveis.</p>`}
-
-      <div class="section-title">Diferença</div>
-      ${diferencaTabelaPropostaBody(u, tabela, w.seriesEditor)}
-    ` : ''}
-
-    <div class="section-title" style="margin-top:0;">Proposta do Proponente</div>
-    <div class="stack" style="margin-bottom:10px;">
-      ${w.seriesEditor.map((s,idx)=>`
-        <div class="list-card" style="cursor:default; flex-direction:column; align-items:stretch;">
-          <div style="display:flex; justify-content:space-between; align-items:baseline; margin-bottom:8px;">
-            <div style="font-weight:600; font-size:13.5px;">${s.nome}</div>
-            <div style="display:flex; align-items:center; gap:8px;">
-              <div class="mono muted" style="font-size:11.5px;">${s.percentual}%</div>
-              <button class="list-remove" onclick="wizardRemoveSerieEditor(${idx})" aria-label="Remover serie">${I.close}</button>
-            </div>
-          </div>
-          <div class="field-row">
-            <div class="field"><label>Parcelas</label><input type="number" min="1" value="${s.quantidade}" onchange="wizardSerieEditorInput(${idx},'quantidade',this.value)"></div>
-            <div class="field"><label>Valor da parcela (R$)</label><input type="number" min="0" step="0.01" value="${s.valor}" onchange="wizardSerieEditorInput(${idx},'valor',this.value)"></div>
-          </div>
-          <div class="muted" style="font-size:11.5px; text-align:right; margin-top:4px;">Subtotal: ${brl(s.quantidade*s.valor)}</div>
-        </div>
-      `).join('')}
-    </div>
-    ${tabela ? `
-      <div class="field-row" style="align-items:flex-end; margin-bottom:18px;">
-        <div class="field" style="flex:1;"><label for="wz-nova-serie">Nova serie</label>
-          <select id="wz-nova-serie">${tabela.series.map(s=>`<option value="${s.catalogoId}">${s.nome} (${s.percentual}%)</option>`).join('')}</select>
-        </div>
-        <button class="btn btn-secondary" onclick="wizardAddSerieEditor()">${I.plus} Adicionar serie...</button>
-      </div>
-    ` : ''}
-
-    <div class="kv-table" style="margin-bottom:16px;">
-      <div class="kv-row"><span class="k">Total da proposta</span><span class="v">${brl(alocado)}</span></div>
-    </div>
-
-    <div class="btn-row" style="margin-top:4px;">
-      <button class="btn btn-primary" ${!sanidadeOk?'disabled':''} onclick="wizardGoto(4)">Continuar</button>
-    </div>
-    ${!sanidadeOk? `<p class="muted" style="font-size:11.5px; text-align:center; margin-top:8px;">A soma da serie precisa ser maior que zero, e toda linha com valor precisa ter ao menos 1 parcela.</p>` : `<p class="muted" style="font-size:11.5px; text-align:center; margin-top:8px;">Voce pode montar uma proposta diferente da tabela - se a diferenca passar de 10%, vai para aprovacao do Gerente Comercial.</p>`}
-  `;
 }
 function wizardAddPagamento(){
   const tipo = document.getElementById('wp-tipo').value;
@@ -4103,270 +2656,1991 @@ function confirmarReserva(){
     });
 }
 
+
+/* =====================================================================================
+   REDESIGN 1b (Codeart Design System) - casca do app, navegacao, avisos e paineis.
+   Este bloco substitui a casca antiga (appbar + tabbar de 6 abas). As chamadas sfApi e o
+   resto da integracao com o Salesforce nao mudaram.
+   ===================================================================================== */
+function esc(s){
+  return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+function $(id){ return document.getElementById(id); }
+/* icones novos do redesign (mesmo traco/estilo dos icones existentes) */
+Object.assign(I, {
+  back:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 18l-6-6 6-6"/></svg>',
+  next:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18l6-6-6-6"/></svg>',
+  arrowR:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14"/><path d="m12 5 7 7-7 7"/></svg>',
+  ext:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 3h6v6"/><path d="M10 14 21 3"/><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/></svg>',
+  users:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>',
+  userPlus:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M19 8v6"/><path d="M22 11h-6"/></svg>',
+  zap:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M13 2 3 14h9l-1 8 10-12h-9z"/></svg>',
+  alertc:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 8v4"/><path d="M12 16h.01"/></svg>',
+  checkc:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="m9 12 2 2 4-4"/></svg>',
+  upload:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="m17 8-5-5-5 5"/><path d="M12 3v12"/></svg>',
+  eye:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/></svg>',
+  term:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m4 17 6-6-6-6"/><path d="M12 19h8"/></svg>',
+  trash:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>',
+  file:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/><path d="M9 15h6M9 11h2"/></svg>',
+  folder:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"/></svg>',
+  bookmark:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 3h14v18l-7-4-7 4V3z"/></svg>',
+  chat:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M7.9 20A9 9 0 1 0 4 16.1L2 22Z"/></svg>',
+});
+
+/* ---------- estado / navegacao (4 abas + botao +) ---------- */
+function avatarFotoCarregada(){
+  try{ return localStorage.getItem('codechave-avatar') || localStorage.getItem('codechave_avatar_foto') || null; }
+  catch(e){ return null; }
+}
+function onAvatarFileChosen(event){
+  const file = event.target.files && event.target.files[0];
+  event.target.value = '';
+  if(!file) return;
+  const url = URL.createObjectURL(file), img = new Image();
+  img.onload = () => {
+    const size = 256, side = Math.min(img.width, img.height);
+    const canvas = document.createElement('canvas'); canvas.width = size; canvas.height = size;
+    canvas.getContext('2d').drawImage(img, (img.width-side)/2, (img.height-side)/2, side, side, 0, 0, size, size);
+    const dataUrl = canvas.toDataURL('image/jpeg', 0.85);
+    URL.revokeObjectURL(url);
+    try{ localStorage.setItem('codechave-avatar', dataUrl); }catch(e){}
+    state.avatarFoto = dataUrl;
+    render();
+    toast('Foto de perfil atualizada');
+  };
+  img.src = url;
+}
+const TAB_ROOTS = { home:'home', clientes:'clientesList', empreendimentos:'empList', negocios:'negociosHub' };
+/* nomes antigos de aba (leads/contas/reservas) continuam funcionando: viram o seletor interno
+   de Clientes e de Negocios */
+const TAB_ALIAS = {
+  leads:['clientes','segC','leads'], contas:['clientes','segC','contas'],
+  reservas:['negocios','segN','reservas'], negocios:['negocios','segN','negocios'],
+};
+function switchTab(tab, keepSeg){
+  const al = TAB_ALIAS[tab];
+  if(al){
+    if(!keepSeg) state[al[1]] = al[2];
+    tab = al[0];
+  }
+  state.tab = tab; state.mode = 'tabs';
+  state.stacks[tab] = [{screen: TAB_ROOTS[tab]}];
+  state.sheet = null;
+  state.pdfModoSelecao = false;
+  render({resetScroll:true});
+}
+/* toque na tab bar: mantem o seletor interno (Leads/Contas, Reservas/Negocios) que o corretor ja usava */
+function tabTap(tab){ switchTab(tab, true); }
+function goBack(){
+  if(state.mode==='wizard'){ wizardBack(); return; }
+  const s = state.stacks[state.tab];
+  if(s.length>1){ s.pop(); render({resetScroll:true}); }
+}
+function fecharPaineis(){ state.sheet = null; state.docPick = null; state.wa = null; render(); }
+
+/* ---------- avisos (toast) com Desfazer ---------- */
+let toastUndoFn = null;
+function toast(msg, undo){
+  const el = $('toast');
+  const erro = /^(N[aã]o foi|Falha|Erro|Busca falhou|Sess[aã]o expirada)/i.test(String(msg));
+  toastUndoFn = undo || null;
+  el.innerHTML = `<span style="display:flex; color:${erro?'#ff9a95':'var(--color-success)'}">${erro?I.alertc:I.checkc}</span><span class="m">${msg}</span>${undo?'<button class="undo" onclick="doUndo()">Desfazer</button>':''}`;
+  el.classList.add('show');
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(()=>{ el.classList.remove('show'); toastUndoFn = null; }, undo ? 5000 : 2400);
+}
+function doUndo(){
+  const f = toastUndoFn; toastUndoFn = null;
+  clearTimeout(toastTimer);
+  $('toast').classList.remove('show');
+  if(f) f();
+}
+
+/* ---------- render principal ---------- */
+function currentScreen(){
+  if(state.mode==='wizard') return renderWizard();
+  const top = state.stacks[state.tab][state.stacks[state.tab].length-1];
+  switch(top.screen){
+    case 'home': return screenHome();
+    case 'clientesList': return screenClientesList();
+    case 'leadForm': return screenLeadForm(top.params);
+    case 'leadDetail': return screenLeadDetail(top.params.id);
+    case 'clienteForm': return screenClienteForm(top.params);
+    case 'clienteDetail': return screenClienteDetail(top.params.id);
+    case 'contaEditar': return screenContaEditar(top.params.id);
+    case 'empList': return screenEmpList();
+    case 'empDetail': return screenEmpDetail(top.params.id);
+    case 'unidadeDetail': return screenUnidadeDetail(top.params.id);
+    case 'negociosHub': return screenNegociosHub();
+    case 'resDetail': return screenResDetail(top.params.id);
+    case 'negocioDetail': return screenNegocioDetail(top.params.id);
+    case 'visitaForm': return screenVisitaForm();
+    case 'comissoes': return screenComissoes();
+    case 'propostaResumo': return screenPropostaResumo();
+    default: return {title:'', back:false, body:''};
+  }
+}
+/* topo escuro padrao: voltar + acoes na primeira linha, titulo grande embaixo. Em telas raiz
+   de aba (sem voltar) titulo e acoes dividem a mesma linha. */
+function defaultTop(s){
+  const act = s.action ? `<div class="top-actions">${s.action}</div>` : '';
+  if(!s.back){
+    return `<div class="top">
+      <div class="top-row"><h1 class="top-title">${s.title||''}</h1>${act}</div>
+      ${s.sub?`<p class="top-sub">${s.sub}</p>`:''}
+      ${s.topExtra||''}
+    </div>`;
+  }
+  return `<div class="top">
+    <div class="top-row"><button class="circ-btn" onclick="goBack()" aria-label="Voltar">${I.back}</button>${s.eyebrow?`<span class="top-eyebrow">${s.eyebrow}</span>`:''}${act}</div>
+    <div><h1 class="top-title">${s.title||''}</h1>${s.sub?`<p class="top-sub" style="margin-top:6px;">${s.sub}</p>`:''}</div>
+    ${s.topExtra||''}
+  </div>`;
+}
+function render(opts={}){
+  const view0 = $('view');
+  if(state.mode==='login'){
+    $('tabbar').hidden = true;
+    $('selbar').innerHTML = '';
+    view0.innerHTML = screenLoginBody();
+    renderOverlays();
+    return;
+  }
+  const active = document.activeElement;
+  const activeId = active && active.id ? active.id : null;
+  const selStart = active && typeof active.selectionStart === 'number' ? active.selectionStart : null;
+  const scrollTop = view0 ? view0.scrollTop : 0;
+
+  const s = currentScreen();
+  const html = s.full != null
+    ? s.full
+    : `<div class="screen">${s.top != null ? s.top : defaultTop(s)}<div class="sheet ${s.sheetClass||''} ${s.hideTab?'noTab':''}">${s.body}</div></div>`;
+  view0.innerHTML = html;
+  view0.scrollTop = (opts.resetScroll && !activeId) ? 0 : scrollTop;
+
+  const hideTab = state.mode==='wizard' || !!s.hideTab || s.full != null;
+  $('tabbar').hidden = hideTab;
+  document.querySelectorAll('.tab-btn').forEach(b=>b.classList.toggle('active', b.dataset.tab===state.tab && !hideTab));
+  renderSelBar(s);
+  renderOverlays();
+
+  if(activeId){
+    const el = $(activeId);
+    if(el){
+      el.focus({preventScroll:true});
+      if(selStart != null && typeof el.setSelectionRange === 'function'){
+        try{ el.setSelectionRange(selStart, selStart); }catch(e){}
+      }
+    }
+  }
+}
+/* barra "N unidades selecionadas - Ver proposta" (empreendimento / unidade) */
+function renderSelBar(s){
+  const box = $('selbar');
+  const top = state.mode==='tabs' ? state.stacks[state.tab][state.stacks[state.tab].length-1].screen : null;
+  const unidades = state.pdfSelecao.map(id=>unitById(id)).filter(Boolean);
+  if(unidades.length && (top==='empDetail' || top==='unidadeDetail')){
+    const total = unidades.reduce((a,u)=>a+(u.valor||0),0);
+    box.innerHTML = `<div class="sel-bar"><div><b>${unidades.length} ${unidades.length>1?'unidades selecionadas':'unidade selecionada'}</b><span>Total ${brl(total)}</span></div><button class="btn btn-primary btn-sm" onclick="go('propostaResumo',{})">Ver proposta ${I.arrowR}</button></div>`;
+  } else box.innerHTML = '';
+}
+
+/* ---------- paineis que sobem de baixo / modo apresentacao ---------- */
+let _overlayKey = null;
+function overlayKey(){
+  if(state.present) return 'present:'+state.present.empId+':'+(state.present.unitId||'')+':'+state.present.idx+':'+presentationSlides().map(s=>s.src?1:0).join('');
+  if(state.sheet==='acoes') return 'acoes';
+  if(state.docPick) return 'docPick:'+state.docPick.clienteId+':'+state.docPick.tipoDocumento;
+  if(state.wa) return 'wa:'+state.wa.paraId;
+  return '';
+}
+function renderOverlays(force){
+  const key = overlayKey();
+  if(!force && key === _overlayKey) return;
+  _overlayKey = key;
+  const box = $('overlay');
+  if(state.present){ box.innerHTML = presentationHtml(); return; }
+  if(state.sheet==='acoes'){ box.innerHTML = acoesHtml(); return; }
+  if(state.docPick){ box.innerHTML = docPickHtml(); return; }
+  if(state.wa){ box.innerHTML = waHtml(); return; }
+  box.innerHTML = '';
+}
+function abrirAcoes(){ state.sheet = 'acoes'; renderOverlays(); }
+function acoesHtml(){
+  const card = (fn, icon, sun, t, s) => `<button class="act-card" onclick="${fn}"><span class="ai ${sun?'sun':''}">${icon}</span><span><b>${t}</b><span class="s">${s}</span></span></button>`;
+  return `<div class="overlay">
+    <div class="scrim" onclick="fecharPaineis()"></div>
+    <div class="panel">
+      <div class="grab"></div>
+      <div><div class="ph-eyebrow">Ação rápida</div><div class="ph-title">O que vamos fazer agora?</div></div>
+      <div class="act-grid">
+        ${card("acaoRapida('lead')", I.userPlus, false, 'Novo lead', 'Cadastro em 30s')}
+        ${card("acaoRapida('visita')", I.calendar, false, 'Agendar visita', 'Decorado ou unidade')}
+        ${card("acaoRapida('reserva')", I.bookmark, true, 'Nova reserva', 'Travar uma unidade')}
+        ${card("acaoRapida('proposta')", I.file, false, 'Enviar proposta', 'PDF com unidades')}
+      </div>
+      <button class="cancel" onclick="fecharPaineis()">Cancelar</button>
+    </div>
+  </div>`;
+}
+function acaoRapida(id){
+  state.sheet = null;
+  if(id==='lead'){ switchTab('leads'); go('leadForm',{}); }
+  else if(id==='visita'){ openAgendarVisita(); }
+  else if(id==='reserva'){ switchTab('empreendimentos'); toast('Escolha uma unidade disponível'); }
+  else if(id==='proposta'){ go('propostaResumo',{}); }
+  renderOverlays();
+}
+
+
+/* =====================================================================================
+   REDESIGN 1b - login, inicio, clientes (leads + contas)
+   ===================================================================================== */
+function badge(tone, text){ return `<span class="badge badge-${tone}">${text}</span>`; }
+function avVar(i){ return i%3===1 ? ' v2' : i%3===2 ? ' v3' : ''; }
+function primeiroNome(n){ return String(n||'').trim().split(/\s+/)[0] || ''; }
+function telDigitos(t){ return String(t||'').replace(/\D/g,''); }
+function mi(v){
+  if(v==null || isNaN(v)) return '-';
+  return v >= 1e6 ? 'R$ ' + (v/1e6).toLocaleString('pt-BR',{maximumFractionDigits:2}) + ' mi' : 'R$ ' + Math.round(v/1000) + ' mil';
+}
+function semAcento(s){ return String(s||'').normalize('NFD').replace(/[̀-ͯ]/g,'').toLowerCase(); }
+
+/* ---------- LOGIN ---------- */
+function screenLoginBody(){
+  return `
+    <div class="login-screen">
+      <div class="login-ring"></div>
+      <img class="login-logo" src="assets/codeart-horizontal-light-blue.png" alt="code art">
+      <div class="login-hero">
+        <span class="ov">CodeChave</span>
+        <h1>Sua carteira,<br><b>suas chaves.</b></h1>
+        <p>Proposta e reserva de imóveis, direto do bolso do corretor.</p>
+      </div>
+      <div class="login-actions">
+        ${state.loginLoading
+          ? `<div class="login-load"><span class="spinner" style="border-color:rgba(255,255,255,.2); border-top-color:var(--sky-500); width:16px; height:16px;"></span>Conectando à sua org Salesforce…</div>`
+          : `<button class="btn btn-lg btn-accent" onclick="doLogin()">Entrar com Salesforce ${I.arrowR}</button>`}
+        <div class="login-footer">Ambiente: Produção · v0.1</div>
+      </div>
+    </div>`;
+}
+
+/* ---------- INICIO ---------- */
+function hojeExtenso(){
+  const s = new Date().toLocaleDateString('pt-BR',{weekday:'long',day:'numeric',month:'long'});
+  return s.charAt(0).toUpperCase() + s.slice(1);
+}
+function leadsRoleta(){
+  return DB.leads.filter(l=>l.roleta && l.status==='Novo').sort((a,b)=>(a.chegouMin||0)-(b.chegouMin||0));
+}
+/* quantos documentos obrigatorios faltam numa conta - null enquanto o checklist real nao carregou */
+function docsPendentes(c){
+  if(c.real){
+    if(!c.documentosReais) return null;
+    const ob = c.documentosReais.filter(d=>d.obrigatorio);
+    return {pend: ob.filter(d=>!d.hasFile).length, tot: ob.length, ok: ob.filter(d=>d.hasFile).length};
+  }
+  const {enviados, total} = docsResumo(c);
+  return {pend: total-enviados, tot: total, ok: enviados};
+}
+function contaTemReserva(c){
+  return DB.reservas.some(r=>r.clienteId===c.id || (r.clienteNomeInline && r.clienteNomeInline===c.nome));
+}
+/* "Para hoje": ate 4 tarefas que dependem do corretor - lead da roleta esperando, contraproposta ou
+   aprovacao de desconto pendente, documento obrigatorio pendente. Boleto atrasado NAO entra
+   (fica com o financeiro). */
+function tarefasHoje(){
+  const tasks = [];
+  const late = leadsRoleta().filter(l=>(l.chegouMin||0)>15);
+  if(late.length){
+    tasks.push({icon:I.users, bg:'var(--sky-100)', fg:'var(--sky-700)',
+      title: late.length+(late.length>1?' leads esperando':' lead esperando')+' há mais de 15 min',
+      sub: late.map(l=>esc(l.nome)).join(', '),
+      open: `switchTab('leads'); go('leadDetail',{id:'${late[0].id}'})`});
+  }
+  DB.reservas.filter(r=>r.aprovacao && (r.aprovacao.status==='contraproposta' || r.aprovacao.status==='aguardando'))
+    .sort((a,b)=>(b.aprovacao.status==='contraproposta')-(a.aprovacao.status==='contraproposta'))
+    .forEach(r=>{
+      const contra = r.aprovacao.status==='contraproposta';
+      tasks.push({icon:I.zap, bg: contra?'var(--sky-100)':'var(--sun-100)', fg: contra?'var(--sky-700)':'var(--charcoal-700)',
+        title: contra ? 'Contraproposta do Gerente Comercial' : 'Desconto aguardando aprovação',
+        sub: esc((r.protocolo||'')+' · '+resNomeCliente(r)),
+        open: `switchTab('reservas'); go('resDetail',{id:'${r.id}'})`});
+    });
+  DB.clientes.filter(contaTemReserva).forEach(c=>{
+    if(c.real) sfCarregarDocumentos(c.id);
+    const d = docsPendentes(c);
+    if(d && d.pend>0){
+      tasks.push({icon:I.plus, bg:'var(--color-warning-soft)', fg:'var(--sun-700)',
+        title: d.pend+(d.pend>1?' documentos pendentes · ':' documento pendente · ')+esc(primeiroNome(c.nome)),
+        sub: 'Bloqueia a análise de crédito',
+        open: `abrirConta('${c.id}','docs')`});
+    }
+  });
+  return tasks;
+}
+function irConta(id, tab){ state.contaTab = tab || 'reservas'; go('clienteDetail',{id}); }
+function abrirConta(id, tab){ switchTab('contas'); irConta(id, tab); }
+function screenHome(){
+  const leadsHoje = DB.leads.filter(l=>l.criado===sfDataCurta(new Date().toISOString())).length;
+  const emNegociacao = DB.leads.filter(l=>l.status!=='Novo' && l.status!=='Convertido' && l.status!=='Desqualificado').length
+    + DB.reservas.filter(r=>r.status==='Em analise' || r.status==='Em análise').length;
+  const roleta = leadsRoleta();
+  const visitas = visitasUpcoming();
+  const tarefas = tarefasHoje();
+  const MES = ['JAN','FEV','MAR','ABR','MAI','JUN','JUL','AGO','SET','OUT','NOV','DEZ'];
+  const avatar = state.avatarFoto
+    ? `<span class="pic" style="background-image:url('${state.avatarFoto}')"></span>`
+    : `<span class="pic">${initials(state.sfUsuarioNomeCompleto || state.sfUsuarioNome || 'Corretor')}</span>`;
+  const top = `
+    <div class="top" style="gap:18px;">
+      <div class="top-row" style="gap:12px;">
+        <div style="flex:1; min-width:0; display:flex; flex-direction:column; gap:3px;">
+          <span class="top-eyebrow">Bom te ver</span>
+          <b style="font:700 26px var(--font-display); letter-spacing:-.01em; color:#fff;">Olá, ${esc(state.sfUsuarioNome || 'Corretor(a)')}</b>
+          <span style="font-size:12.5px; color:rgba(242,242,242,.65);">${hojeExtenso()}</span>
+        </div>
+        <button class="avatar-btn" onclick="avatarPickerOpen()" aria-label="Alterar foto de perfil">${avatar}<span class="badgecam">${I.camera}</span></button>
+        <button class="circ-btn" onclick="doLogout()" aria-label="Sair / trocar de usuario">${I.logout}</button>
+      </div>
+      <div class="stats-dark">
+        <div><b>${leadsHoje}</b><span>Leads hoje</span></div>
+        <div><b>${emNegociacao}</b><span>Em negociação</span></div>
+        <div><b style="color:var(--sun-500);">${DB.reservas.length}</b><span>Reservas</span></div>
+      </div>
+    </div>`;
+  const body = `
+    <div class="section-title big">Para hoje · ${tarefas.length}</div>
+    ${tarefas.length ? `
+      <div class="tasks">
+        ${tarefas.slice(0,4).map(t=>`
+          <button class="task" onclick="${t.open}">
+            <span class="ti" style="background:${t.bg}; color:${t.fg};">${t.icon}</span>
+            <span style="flex:1; min-width:0;"><b>${t.title}</b><span class="s">${t.sub}</span></span>
+            <span class="chev">${I.next}</span>
+          </button>`).join('')}
+      </div>` : `<div class="empty-ok">${I.checkc}<b style="font-size:13.5px; color:var(--charcoal-700);">Tudo em dia por aqui</b></div>`}
+
+    ${state.sfRoletaCadastrado ? `
+      <div class="section-title">Meu status na roleta</div>
+      <div class="seg light">
+        ${[['Online','var(--color-success)'],['Ausente','var(--color-warning)'],['Offline','var(--grey-400)']].map(([k,c])=>
+          `<button class="${state.sfRoletaStatus===k?'on':''}" onclick="roletaStatusSet('${k}')"><i style="background:${c}"></i>${k}</button>`).join('')}
+      </div>` : ''}
+
+    <div class="section-title big" style="margin-top:6px;">
+      <span style="display:flex; align-items:center; gap:8px;"><span class="live-dot"></span>Leads da roleta · ${roleta.length}</span>
+      <button class="link-btn" onclick="switchTab('leads')">Ver todos</button>
+    </div>
+    ${roleta.length ? roleta.map(roletaLeadCard).join('') : `<div class="empty">Nenhum lead novo na fila agora</div>`}
+
+    <div class="section-title big" style="margin-top:6px;">
+      <span>Próximas visitas</span>
+      <button class="link-btn" onclick="openAgendarVisita()">Agendar</button>
+    </div>
+    ${visitas.length ? visitas.map(v=>{
+        const l = leadById(v.leadId) || {nome:'Lead'}; const [y,m,d] = (v.data||'').split('-');
+        return `<button class="visit-card" onclick="switchTab('leads'); go('leadDetail',{id:'${v.leadId}'})"><span class="d"><b>${d||'--'}</b><span>${m?MES[+m-1]:''}</span></span><span class="t"><b>${esc(l.nome)}</b><span>${esc([v.hora, v.local].filter(Boolean).join(' · '))}</span></span></button>`;
+      }).join('') : `
+      <div class="arti-card">
+        <img src="assets/arti-sentado.png" alt="">
+        <div style="display:flex; flex-direction:column; gap:8px; align-items:flex-start;">
+          <span class="t">Nenhuma visita agendada. Que tal marcar com um lead da roleta?</span>
+          <button class="btn btn-secondary btn-sm" onclick="openAgendarVisita()">Agendar visita</button>
+        </div>
+      </div>`}
+
+    <button class="list-card" onclick="go('comissoes',{}); sfCarregarComissoes()" style="margin-top:6px;">
+      <span class="ic-badge">${I.wallet}</span>
+      <span style="flex:1; min-width:0;"><b class="title-sm" style="font-size:14px;">Comissões</b><span class="sub-sm" style="display:block;">${comissoesResumoCurto()}</span></span>
+      <span class="list-card-chevron">${I.next}</span>
+    </button>`;
+  return {title:'CodeChave', back:false, top, body};
+}
+function roletaLeadCard(l){
+  const emp = empById(l.interesse);
+  const tel = telDigitos(l.telefone);
+  return `
+    <div class="roleta-card">
+      <button class="roleta-main" onclick="switchTab('leads'); go('leadDetail',{id:'${l.id}'})">
+        <span class="avatar">${initials(l.nome)}</span>
+        <span style="flex:1; min-width:0; display:flex; flex-direction:column; gap:2px;">
+          <b class="title-sm">${esc(l.nome)}</b>
+          <span class="sub-sm">${esc([emp&&emp.nome, l.origem, l.cidade].filter(Boolean).join(' · '))}</span>
+        </span>
+        <span class="roleta-time">${chegouLabel(l.chegouMin)}</span>
+      </button>
+      <div class="roleta-actions">
+        <a class="sq-btn" href="tel:${tel}" aria-label="Ligar para ${esc(l.nome)}">${I.phone}</a>
+        <a class="sq-btn" href="https://wa.me/55${tel}" target="_blank" rel="noopener" aria-label="WhatsApp para ${esc(l.nome)}">${I.whats}</a>
+        <button class="btn btn-primary btn-sm" style="flex:1; min-height:44px;" onclick="switchTab('leads'); go('leadDetail',{id:'${l.id}'})">Atender ${I.arrowR}</button>
+      </div>
+    </div>`;
+}
+function startNovaReserva(){
+  switchTab('empreendimentos');
+  toast('Escolha um empreendimento e uma unidade disponivel');
+}
+
+/* ---------- CLIENTES (Leads | Contas) ---------- */
+const LEAD_TONE = {'Novo':'sky','Contato Realizado':'neutral','Em Atendimento':'sun','Qualificação':'success','Convertido':'charcoal','Desqualificado':'danger'};
+function leadCard(l, i){
+  const emp = empById(l.interesse);
+  return `
+    <button class="list-card" onclick="go('leadDetail',{id:'${l.id}'})">
+      <span class="avatar${avVar(i||0)}">${initials(l.nome)}</span>
+      <span style="flex:1; min-width:0; display:flex; flex-direction:column; gap:4px; align-items:flex-start;">
+        <b class="title-sm">${esc(l.nome)}</b>
+        <span class="sub-sm" style="max-width:100%;">${esc([l.origem, emp&&emp.nome].filter(Boolean).join(' · '))}</span>
+        ${badge(LEAD_TONE[l.status]||'neutral', esc(l.status))}
+      </span>
+      <span class="list-card-chevron">${I.next}</span>
+    </button>`;
+}
+function contaBadge(c){
+  const atr = DB.boletos.some(b=>b.clienteId===c.id && b.status==='Atrasado');
+  if(atr) return badge('danger','Boleto atrasado');
+  const d = docsPendentes(c);
+  if(d && d.tot && d.ok<d.tot) return badge('warning', 'Docs '+d.ok+'/'+d.tot);
+  const abertas = c.real ? 0 : DB.reservas.filter(r=>r.clienteId===c.id).length;
+  if(abertas) return badge('sky', abertas+' reserva'+(abertas>1?'s':''));
+  if(c.real && contaTemReserva(c)) return badge('sky','Reserva em andamento');
+  if(d && d.tot) return badge('success','Docs completos');
+  return '';
+}
+function contaCard(c, i){
+  const r = DB.reservas.find(r=>r.clienteId===c.id || (r.clienteNomeInline && r.clienteNomeInline===c.nome));
+  const un = r ? [resNomeEmpreendimento(r), resNomeUnidade(r)].filter(x=>x && x!=='-').join(' ') : '';
+  return `
+    <button class="list-card" onclick="irConta('${c.id}')">
+      <span class="avatar${avVar(i||0)}">${initials(c.nome)}</span>
+      <span style="flex:1; min-width:0; display:flex; flex-direction:column; gap:4px; align-items:flex-start;">
+        <b class="title-sm">${esc(c.nome)}</b>
+        <span class="sub-sm" style="max-width:100%;">${esc([c.cpf && c.cpf!=='-' ? c.cpf : '', un].filter(Boolean).join(' · '))}</span>
+        ${contaBadge(c)}
+      </span>
+      <span class="list-card-chevron">${I.next}</span>
+    </button>`;
+}
+function screenClientesList(){
+  const seg = state.segC === 'contas' ? 'contas' : 'leads';
+  const qRaw = state.filters.clientesQuery || '';
+  const q = semAcento(qRaw.trim());
+  const leads = DB.leads.filter(l=>!q || semAcento(l.nome).includes(q));
+  let contas = DB.clientes.filter(c=>!q || semAcento(c.nome).includes(q) || String(c.cpf||'').includes(q.replace(/\D/g,'')||'§'));
+  /* "precisam de atencao primeiro": boleto atrasado, depois documentacao incompleta */
+  const score = c => (DB.boletos.some(b=>b.clienteId===c.id && b.status==='Atrasado') ? 2 : 0) + ((docsPendentes(c)||{pend:0}).pend>0 ? 1 : 0);
+  contas = contas.map((c,i)=>({c,i})).sort((a,b)=>score(b.c)-score(a.c) || a.i-b.i).map(x=>x.c);
+  const topExtra = `
+    <div class="seg">
+      <button class="${seg==='leads'?'on':''}" onclick="state.segC='leads'; render({resetScroll:true})">Leads · ${DB.leads.length}</button>
+      <button class="${seg==='contas'?'on':''}" onclick="state.segC='contas'; render({resetScroll:true})">Contas · ${DB.clientes.length}</button>
+    </div>
+    <div class="top-search">${I.search}<input id="clientesSearch" placeholder="Buscar por nome ou CPF" value="${esc(qRaw)}" oninput="state.filters.clientesQuery=this.value; render()"></div>`;
+  const list = seg==='leads' ? leads.map(leadCard) : contas.map(contaCard);
+  const body = `
+    <div class="section-title" style="margin-top:0;">${seg==='leads' ? 'Mais recentes primeiro' : 'Precisam de atenção primeiro'}</div>
+    ${list.length ? `<div class="stack">${list.join('')}</div>` : `<div class="empty">${qRaw ? 'Ninguém encontrado com “'+esc(qRaw)+'”' : (seg==='leads' ? 'Nenhum lead ainda' : 'Nenhuma conta cadastrada ainda')}</div>`}`;
+  const action = seg==='leads'
+    ? `<button class="circ-btn" onclick="go('leadForm',{})" aria-label="Novo lead">${I.plus}</button>`
+    : `<button class="circ-btn" onclick="go('clienteForm',{})" aria-label="Nova conta">${I.plus}</button>`;
+  return {title:'Clientes', back:false, action, topExtra, body};
+}
+
+/* ---------- LEAD ---------- */
+function setLeadStatus(id, status, silent){
+  const l = leadById(id);
+  const statusAnterior = l.status;
+  if(statusAnterior === status) return;
+  l.status = status;
+  render();
+  const undo = () => setLeadStatus(id, statusAnterior, true);
+  if(!l.real){
+    toast(silent ? 'Status revertido para "'+status+'"' : 'Status: '+status, silent ? null : undo);
+    return;
+  }
+  sfApi(`/leads/${id}`, {method:'PATCH', body:JSON.stringify({status})})
+    .then(()=>{ toast(silent ? 'Status revertido para "'+status+'"' : 'Status: '+status, silent ? null : undo); })
+    .catch(e=>{
+      l.status = statusAnterior;
+      render();
+      toast('Nao foi possivel atualizar no Salesforce: '+e.message);
+    });
+}
+function leadStatusPath(l){
+  const converted = DB.clientes.some(c=>c.origemLeadId===l.id);
+  const effective = converted ? 'Convertido' : l.status;
+  const idx = LEAD_STAGES.indexOf(effective);
+  return `
+    <div class="lead-path">
+      ${LEAD_STAGES.map((s,i)=>{
+        const st = i<idx ? 'done' : i===idx ? 'current' : 'todo';
+        const locked = s==='Convertido' || st==='current';
+        return `<button class="path-step ${st}" ${locked?'disabled':`onclick="setLeadStatus('${l.id}','${s}')"`}>${st==='done'?`<span class="path-check">${I.check}</span>`:''}${s==='Contato Realizado'?'Contato':s}</button>`;
+      }).join('')}
+    </div>`;
+}
+function actRow(tel, email, hlFn, hlIcon, hlLabel){
+  const t = telDigitos(tel);
+  return `
+    <div class="act-row">
+      <a class="act" href="tel:${t}"><span class="ic">${I.phone}</span>Ligar</a>
+      <a class="act" href="https://wa.me/55${t}" target="_blank" rel="noopener"><span class="ic">${I.whats}</span>WhatsApp</a>
+      ${email ? `<a class="act" href="mailto:${esc(email)}"><span class="ic">${I.mail}</span>E-mail</a>` : `<button class="act" onclick="toast('Sem e-mail cadastrado')"><span class="ic">${I.mail}</span>E-mail</button>`}
+      <button class="act hl" onclick="${hlFn}"><span class="ic">${hlIcon}</span>${hlLabel}</button>
+    </div>`;
+}
+function screenLeadDetail(id){
+  const l = leadById(id);
+  const emp = empById(l.interesse);
+  const converted = DB.clientes.some(c=>c.origemLeadId===id);
+  if(l.real) sfCarregarVisitasLead(id);
+  const visita = leadVisita(id);
+  const top = `
+    <div class="top">
+      <div class="top-row"><button class="circ-btn" onclick="goBack()" aria-label="Voltar">${I.back}</button><span class="top-eyebrow">Lead</span></div>
+      <div class="id-row">
+        <span class="id-avatar">${initials(l.nome)}</span>
+        <div style="min-width:0;"><h1 class="id-name">${esc(l.nome)}</h1><span class="id-sub">${esc(l.origem)} · criado ${esc(l.criado)}</span></div>
+      </div>
+      ${actRow(l.telefone, l.email, `openAgendarVisita('${l.id}')`, I.calendar, 'Agendar')}
+    </div>`;
+  const kv = [['Telefone', l.telefone||'-'], ['E-mail', l.email||'-'], ['Origem', l.origem||'-'], ['Interesse', emp?emp.nome:'-']];
+  if(l.cidade) kv.push(['Cidade', l.cidade]);
+  if(l.midia) kv.push(['Mídia', l.midia]);
+  if(l.corretorNome) kv.push(['Corretor', l.corretorNome]);
+  kv.push(['Criado', l.criado ? l.criado+'/2026' : '-']);
+  const body = `
+    <div class="section-title" style="margin-top:0;">Status do lead</div>
+    ${leadStatusPath(l)}
+    ${visita ? `
+      <div class="visit-note">${I.calendar}
+        <span style="flex:1; min-width:0;"><b>Visita agendada</b><span>${fmtDataBR(visita.data)} às ${esc(visita.hora)} · ${esc(visita.local||'Local a definir')}</span></span>
+        <button class="list-remove" onclick="cancelarVisita('${visita.id}')" aria-label="Cancelar visita">${I.close}</button>
+      </div>` : ''}
+    <div class="kv-table">${kv.map(([k,v])=>`<div class="kv-row"><span class="k">${k}</span><span class="v">${esc(v)}</span></div>`).join('')}</div>
+    ${l.obs ? `<div class="section-title">Observações</div><p class="muted" style="font-size:13.5px; margin:0 4px;">${esc(l.obs)}</p>` : ''}
+    ${converted
+      ? `<div class="alert-card ok" style="align-items:center; justify-content:center; padding:14px; gap:8px;">${I.checkc}<b style="color:var(--color-success);">Convertido em conta</b></div>`
+      : `<button class="btn btn-primary btn-lg" onclick="go('clienteForm',{leadId:'${l.id}'})">Converter em conta</button>`}`;
+  return {title:'Lead', back:true, top, body};
+}
+
+/* ---------- CONTA ---------- */
+function iniciarPropostaConta(id){
+  const c = clienteById(id);
+  state.context.preselectCliente = id;
+  switchTab('empreendimentos');
+  toast('Escolha a unidade para '+primeiroNome(c&&c.nome));
+}
+function screenClienteDetail(id){
+  const c = clienteById(id);
+  if(c.real){ sfCarregarContaDetalhe(id); sfCarregarBoletos(id); sfCarregarDocumentos(id); }
+  const tab = state.contaTab || 'reservas';
+  const reservasMock = DB.reservas.filter(r=>r.clienteId===id);
+  const reservasReais = (c.real && c.reservasReais) ? c.reservasReais : [];
+  const nRes = c.real ? reservasReais.length : reservasMock.length;
+  const dk = docsPendentes(c);
+  const boletos = DB.boletos.filter(b=>b.clienteId===id);
+  const atrasados = boletos.filter(b=>b.status==='Atrasado');
+  const top = `
+    <div class="top">
+      <div class="top-row"><button class="circ-btn" onclick="goBack()" aria-label="Voltar">${I.back}</button><span class="top-eyebrow">Conta</span><div class="top-actions"><button class="circ-btn" onclick="go('contaEditar',{id:'${c.id}'})" aria-label="Editar conta">${I.edit}</button></div></div>
+      <div class="id-row">
+        <span class="id-avatar">${initials(c.nome)}</span>
+        <div style="min-width:0;"><h1 class="id-name">${esc(c.nome)}</h1><span class="id-sub">CPF ${esc(c.cpf||'-')}${c.profissao && c.profissao!=='-' ? ' · '+esc(c.profissao) : ''}</span></div>
+      </div>
+      ${actRow(c.telefone, c.email, `iniciarPropostaConta('${c.id}')`, I.bookmark, 'Reservar')}
+    </div>`;
+  const tabs = `
+    <div class="utabs">
+      <button class="${tab==='reservas'?'on':''}" onclick="state.contaTab='reservas'; render()">Reservas · ${nRes}</button>
+      <button class="${tab==='docs'?'on':''}" onclick="state.contaTab='docs'; render()">Documentos${dk&&dk.tot?` ${dk.ok}/${dk.tot}`:''}</button>
+      <button class="${tab==='fin'?'on':''}" onclick="state.contaTab='fin'; render()">Financeiro</button>
+    </div>`;
+  let panel = '';
+  if(tab==='reservas'){
+    const cards = c.real
+      ? reservasReais.map(r=>`
+        <button class="list-card" style="flex-direction:column; align-items:stretch; gap:10px;" onclick="abrirReservaDaConta('${r.id}')">
+          <span style="display:flex; justify-content:space-between; align-items:flex-start; gap:8px;">
+            <span style="min-width:0;"><b style="font:700 16px var(--font-display); color:var(--charcoal-700); display:block;">${esc(r.empreendimentoNome)} · ${esc(r.unidadeNome)}</b></span>
+            ${r.valor ? `<b style="font-size:14px; color:var(--charcoal-700); white-space:nowrap;">${mi(r.valor)}</b>` : ''}
+          </span>
+          <span style="display:flex; justify-content:space-between; align-items:center;">${badge(resTone(r.status), esc(r.status))}<span style="font:600 13px var(--font-sans); color:var(--sky-700);">Ver reserva</span></span>
+        </button>`)
+      : reservasMock.map(r=>`
+        <button class="list-card" style="flex-direction:column; align-items:stretch; gap:10px;" onclick="switchTab('reservas'); go('resDetail',{id:'${r.id}'})">
+          <span style="display:flex; justify-content:space-between; align-items:flex-start; gap:8px;">
+            <span style="min-width:0;"><b style="font:700 16px var(--font-display); color:var(--charcoal-700); display:block;">${esc(resNomeEmpreendimento(r))} · ${esc(resNomeUnidade(r))}</b><span class="sub-sm">${esc(r.protocolo)} · ${esc(r.data)}</span></span>
+            <b style="font-size:14px; color:var(--charcoal-700); white-space:nowrap;">${mi(r.valor)}</b>
+          </span>
+          <span style="display:flex; justify-content:space-between; align-items:center;">${badge(resTone(r.status), esc(r.status))}<span style="font:600 13px var(--font-sans); color:var(--sky-700);">Ver reserva</span></span>
+        </button>`);
+    const kv = [['Telefone', c.telefone||'-'], ['E-mail', c.email||'-'], ['Estado civil', c.estadoCivil||'-'], ['Profissão', c.profissao||'-'], ['Renda mensal', c.renda?brl(c.renda):'-'], ['Endereço', c.endereco||'-']];
+    if(c.rg && c.rg!=='-') kv.unshift(['RG', c.rg]);
+    if(c.naturalidade) kv.push(['Naturalidade', c.naturalidade]);
+    if(c.dataNascimento) kv.push(['Nascimento', fmtDataBR(c.dataNascimento)]);
+    if(c.nomeMae) kv.push(['Nome da mãe', c.nomeMae]);
+    if(c.nomePai) kv.push(['Nome do pai', c.nomePai]);
+    if((c.estadoCivil||'').startsWith('Casado') && c.conjugeNome) kv.push(['Cônjuge', c.conjugeNome]);
+    if(c.empreendimentoInteresseNome) kv.push(['Empreendimento de interesse', c.empreendimentoInteresseNome]);
+    panel = `
+      ${cards.length ? cards.join('') : `<div class="empty">Nenhuma reserva ainda</div>`}
+      <div class="section-title">Dados</div>
+      <div class="kv-table">${kv.map(([k,v])=>`<div class="kv-row"><span class="k">${k}</span><span class="v">${esc(v)}</span></div>`).join('')}</div>`;
+  } else if(tab==='docs'){
+    panel = documentosChecklist(c);
+  } else {
+    panel = `
+      ${atrasados.length ? `<div class="alert-card">${I.alertc}<div style="flex:1;"><b>${atrasados.length} boleto${atrasados.length>1?'s':''} atrasado${atrasados.length>1?'s':''} · ${brl(atrasados.reduce((s,b)=>s+b.valor,0))}</b><div class="muted" style="font-size:12px; margin-top:1px;">Combine a regularização com o cliente</div></div></div>` : ''}
+      ${boletos.length ? `<div class="stack">${boletos.map(boletoRow).join('')}</div>` : `
+        <div class="alert-card" style="background:var(--grey-100); align-items:center;">${I.checkc}<div><b>Sem boletos ainda</b><div class="muted" style="font-size:12px;">As cobranças começam após a assinatura</div></div></div>`}`;
+  }
+  return {title:'Conta', back:true, top, body: tabs + panel};
+}
+function abrirReservaDaConta(id){
+  if(!reservaById(id)){ toast('Reserva ainda carregando… tente de novo em instantes'); return; }
+  switchTab('reservas'); go('resDetail',{id});
+}
+function boletoRow(b){
+  const tone = b.status==='Pago' ? 'success' : b.status==='Atrasado' ? 'danger' : 'neutral';
+  return `
+    <div class="list-card" style="cursor:default;">
+      <div style="flex:1; min-width:0; display:flex; flex-direction:column; gap:2px;">
+        <b class="title-sm" style="font-size:14px;">${esc(b.descricao)}</b>
+        <span class="sub-sm">Vence ${esc(b.vencimento)} · ${brl(b.valor)}</span>
+      </div>
+      ${badge(tone, esc(b.status))}
+    </div>`;
+}
+function resTone(status){
+  const s = semAcento(status);
+  if(s==='assinada' || s==='ativa') return s==='ativa' ? 'sky' : 'success';
+  if(s==='recusada' || s==='cancelada') return 'danger';
+  if(s==='contraproposta') return 'sky';
+  return 'warning';
+}
+
+
+/* =====================================================================================
+   REDESIGN 1b - imoveis (lista, empreendimento, unidade), modo apresentacao, proposta
+   ===================================================================================== */
+/* lista de fotos do empreendimento (mock, galeria real do Salesforce, capa ou ilustracao) -
+   mesma ordem de prioridade que a galeria antiga; src null = ainda carregando */
+function empFotos(e){
+  const mock = PHOTOS[e.id] || [];
+  if(mock.length) return mock.map(f=>({src:f.src, tag:f.tag}));
+  const reais = e.fotosReais || [];
+  if(reais.length){
+    reais.forEach(f=>sfCarregarFotoPorId(f.contentVersionId));
+    return reais.map(f=>({src: state.sfGaleriaCache[f.contentVersionId] || null, tag: f.titulo || 'Foto'}));
+  }
+  if(e.fotoUrl){
+    if(state.sfFotosCache[e.id]) return [{src: state.sfFotosCache[e.id], tag:'Fachada'}];
+    sfCarregarFoto(e);
+    return [{src:null, tag:'Fachada'}];
+  }
+  return [{src:null, svg: buildingSvg(e.variant||1,true), tag:'Ilustração'}];
+}
+function empPlantas(e, u){
+  const p = PLANTAS[e.id];
+  if(Array.isArray(p)){
+    if(u){ const opt = p[(u.plantaTipo||1)-1] || p[0]; return [{src:opt.src, tag:'Planta'}]; }
+    return p.map(o=>({src:o.src, tag:'Planta'}));
+  }
+  if(p) return [{src:p, tag:'Planta'}];
+  if(e.plantaUrl){
+    const cv = sfContentVersionId(e.plantaUrl);
+    if(cv && !state.sfFotoFalhou[cv]){
+      sfCarregarFotoPorId(cv);
+      return [{src: state.sfGaleriaCache[cv] || null, tag:'Planta'}];
+    }
+  }
+  if(u) return [{svg: plantaSvg(u.dorm), tag:'Planta'}];
+  return [];
+}
+function empStatusTone(e){ return e.status==='Pronto para morar' ? 'success' : 'sun'; }
+function empDesde(e){
+  const v = DB.units.filter(u=>u.empId===e.id && u.status==='disponivel' && u.valor>0).map(u=>u.valor);
+  return v.length ? Math.min(...v) : null;
+}
+
+/* ---------- lista de imoveis ---------- */
+function screenEmpList(){
+  const header = {title:'Imóveis', back:false};
+  if(!state.sfEmpreendimentosLoaded){
+    return {...header, body:`<div class="sync-row" style="margin-top:40px;"><span class="spinner"></span> Carregando empreendimentos do Salesforce...</div>`};
+  }
+  if(state.sfEmpreendimentosError){
+    return {...header, body:`
+      <div class="alert-card">${I.alertc}<div><b>Não foi possível carregar</b><div class="muted" style="font-size:12.5px;">${esc(state.sfEmpreendimentosError)}</div></div></div>
+      <button class="btn btn-secondary" onclick="sfCarregarEmpreendimentos()">Tentar novamente</button>`};
+  }
+  if(state.buscaModo) return screenBuscaImoveis();
+  const q = semAcento(state.filters.empQuery||'');
+  const list = DB.emps.filter(e=> semAcento(e.nome+' '+(e.cidade||'')+' '+(e.bairro||'')).includes(q));
+  const totalDisp = DB.emps.reduce((s,e)=>s+(e.unidadesDisponiveis||0),0);
+  const body = `
+    ${empModoTabs()}
+    <div class="search-wrap">${I.search}<input id="empSearch" placeholder="Buscar por nome ou cidade" value="${esc(state.filters.empQuery||'')}" oninput="state.filters.empQuery=this.value; render()"></div>
+    ${list.length ? list.map(e=>{
+      const desde = empDesde(e);
+      return `
+      <button class="emp-card" onclick="go('empDetail',{id:'${e.id}'})">
+        <div class="ph">${empCapaBanner(e)}<span class="bdg">${badge(empStatusTone(e), esc(e.status||'-'))}</span></div>
+        <div class="bd">
+          <div><div class="nm">${esc(e.nome)}</div><div class="sub-sm">${esc([e.bairro, e.cidade].filter(Boolean).join(', '))}</div></div>
+          <div>
+            <div class="row"><span><b style="color:var(--charcoal-700);">${e.vendidoPct||0}%</b> vendido</span><span>${e.totalUnidades||0} unidades</span></div>
+            <div class="progressbar" style="margin-top:6px;"><i style="width:${e.vendidoPct||0}%"></i></div>
+          </div>
+          <div class="foot"><span><b>+${e.unidadesDisponiveis||0}</b> disponíveis</span>${desde ? `<span class="sub-sm">a partir de <b style="color:var(--charcoal-700);">${mi(desde)}</b></span>` : ''}</div>
+        </div>
+      </button>`;}).join('') : `<div class="empty">Nenhum empreendimento encontrado</div>`}`;
+  const action = state.pdfSelecao.length ? `<button class="iconbtn" onclick="go('propostaResumo',{})" aria-label="Ver proposta">${I.file}<span>${state.pdfSelecao.length}</span></button>` : '';
+  return {...header, sub: `${DB.emps.length} empreendimentos · ${totalDisp} unidades disponíveis`, action, body};
+}
+
+/* comodidades do empreendimento (grade de 4 colunas, circulos de 50px em Sky 100) */
+function amenityGrid(e){
+  const keys = e.comodidades || [];
+  if(!keys.length) return '';
+  const itens = keys.map(k=>AMENITIES[k]).filter(Boolean);
+  return `
+    <div class="amenity-card">
+      <div class="hd"><b>Comodidades</b><span>${itens.length} comodidades</span></div>
+      <div class="amenity-grid">
+        ${itens.map(a=>`<div class="amenity-item"><span class="amenity-ic">${a.icon}</span><span>${a.label}</span></div>`).join('')}
+      </div>
+    </div>`;
+}
+function galeriaGo(id, dir, total){
+  const cur = state.galeria[id] || 0;
+  state.galeria[id] = (cur + dir + total) % total;
+  render();
+}
+function empHero(e, fotos, gi){
+  const f = fotos[gi];
+  const bg = f.src ? `<div class="bg" style="background-image:url('${f.src}')"></div>` : `<div class="bg">${f.svg || '<div style="height:100%; display:flex; align-items:center; justify-content:center;"><span class="spinner" style="border-color:rgba(255,255,255,.2); border-top-color:#fff;"></span></div>'}</div>`;
+  const total = e.totalUnidades || 0;
+  return `
+    <div class="emp-hero">
+      ${bg}<div class="shade"></div>
+      ${fotos.length>1 ? `<button class="gnav prev" onclick="galeriaGo('${e.id}',-1,${fotos.length})" aria-label="Foto anterior">${I.back}</button><button class="gnav next" onclick="galeriaGo('${e.id}',1,${fotos.length})" aria-label="Próxima foto">${I.next}</button>` : ''}
+      <div class="inner">
+        <div class="top-row">
+          <button class="circ-btn" style="background:rgba(20,25,29,.5);" onclick="goBack()" aria-label="Voltar">${I.back}</button>
+          <span class="pill">${esc(f.tag)} · ${gi+1}/${fotos.length}</span>
+          ${badge(empStatusTone(e), esc(e.status||'-'))}
+        </div>
+        <div>
+          <div class="hn">${esc(e.nome)}</div>
+          <div class="hs">${esc([e.bairro, e.cidade].filter(Boolean).join(', '))}</div>
+          <div class="hstats">
+            <div><b style="color:var(--sun-500);">+${e.totalDisponiveis!=null ? e.totalDisponiveis : (e.unidadesDisponiveis||0)}</b><span>disponíveis</span></div>
+            <div><b>${e.vendidoPct||0}%</b><span>vendido</span></div>
+            ${empDesde(e) ? `<div><b>${mi(empDesde(e))}</b><span>a partir de</span></div>` : ''}
+          </div>
+        </div>
+      </div>
+    </div>`;
+}
+function screenEmpDetail(id){
+  const e = empById(id);
+  const filter = state.filters.unitFilter;
+  const carregado = !!state.sfDetalhesCarregados[id];
+  if(!carregado) sfCarregarDetalheEmpreendimento(id);
+  const torres = [...new Set(DB.units.filter(u=>u.empId===id).map(u=>u.torre))].sort();
+  const torreAtiva = state.filters.torreAtivaPorEmp[id] && torres.includes(state.filters.torreAtivaPorEmp[id])
+    ? state.filters.torreAtivaPorEmp[id] : torres[0];
+  const unidadesSection = !carregado
+    ? `<div class="sync-row" style="margin-top:8px;"><span class="spinner"></span> Carregando unidades...</div>`
+    : (torreAtiva!=null ? torreSection(id, torreAtiva, filter, state.filters.unitSearch) : emptyState('Nenhuma unidade cadastrada ainda', I.building));
+  const fotos = empFotos(e);
+  const gi = ((state.galeria[id]||0) % fotos.length + fotos.length) % fotos.length;
+  const body = `
+    <button class="btn btn-secondary btn-lg" onclick="abrirApresentacao('${id}')">Modo apresentação</button>
+    ${e.descricao ? `<p style="margin:0; font-size:13.5px; line-height:1.5; color:var(--text-body); text-wrap:pretty;">${esc(e.descricao)}</p>` : ''}
+    ${amenityGrid(e)}
+    ${blocosSelector(id, torres, torreAtiva)}
+    ${tabelasVendasCards(e)}
+    ${estoquePills(e, filter)}
+    <div class="section-title big" style="margin-top:2px;">
+      <span>Unidades</span>
+      <button class="link-btn" onclick="pdfToggleModoSelecao()">${state.pdfModoSelecao?'Concluir seleção':'Selecionar p/ proposta'}</button>
+    </div>
+    ${state.pdfModoSelecao ? `<div style="font-size:12.5px; color:var(--grey-600); padding:0 4px; margin-top:-6px;">Toque nas unidades disponíveis para montar a proposta.</div>` : ''}
+    <div class="search-wrap">${I.search}<input id="unitSearch" placeholder="Buscar unidade por código" value="${esc(state.filters.unitSearch)}" oninput="state.filters.unitSearch=this.value; render()"></div>
+    ${unidadesSection}`;
+  return {title:e.nome, back:true, top: empHero(e, fotos, gi), body, sheetClass:''};
+}
+/* cartao de unidade do redesign: branco quando disponivel (com "Reservar"), ambar quando reservada,
+   cinza quando vendida/bloqueada. Os 4 estados continuam os do Mapa de Disponibilidade real. */
+function unitTile(u){
+  const st = u.status;
+  const disp = st==='disponivel';
+  const modo = state.pdfModoSelecao;
+  const sel = state.pdfSelecao.includes(u.id);
+  const cls = {disponivel:'', reservada:'reserved', vendida:'sold', bloqueada:'blocked'}[st] || 'blocked';
+  const stLabel = {disponivel:'Disponível', reservada:'Reservada', vendida:'Vendida', bloqueada:'Bloqueada'}[st] || '';
+  const stCor = {disponivel:'var(--status-available)', reservada:'var(--status-reserved)', vendida:'var(--status-sold)', bloqueada:'var(--status-blocked)'}[st];
+  const markCls = sel ? 'sel' : (modo && disp) ? 'pick' : ({disponivel:'avail', reservada:'reserved', vendida:'sold', bloqueada:'blocked'}[st] || 'blocked');
+  const meta = u.horizontal ? `${u.metragem} m²` : `${u.andar}º andar · ${u.metragem} m²${u.suite?` · ${u.suite} suíte${u.suite>1?'s':''}`:''}`;
+  const onclick = modo
+    ? (disp ? `pdfToggleUnidade('${u.id}')` : `toast('Só unidades disponíveis entram na proposta')`)
+    : `go('unidadeDetail',{id:'${u.id}'})`;
+  return `
+    <div class="unit-card ${cls} ${sel?'selected':''}" role="button" tabindex="0" onclick="${onclick}">
+      <div class="top2"><span class="code">${esc(unitCode(u))}</span><span class="mark ${markCls}">${sel?I.check:''}</span></div>
+      <span class="sm">${esc(meta)}</span>
+      <span class="vl">${brl(u.valor)}</span>
+      ${disp && !modo ? `<button class="rsv" onclick="event.stopPropagation(); startWizard('${u.id}')">Reservar</button>` : (!disp ? `<span class="stl" style="color:${stCor};">${stLabel}</span>` : '<span class="stl"></span>')}
+    </div>`;
+}
+function onUnitTap(id){ go('unidadeDetail',{id}); }
+
+function screenUnidadeDetail(id){
+  const u = unitById(id);
+  const e = empById(u.empId);
+  const disp = u.status==='disponivel';
+  const stLabel = {disponivel:'Disponível', reservada:'Reservada', vendida:'Vendida', bloqueada:'Bloqueada'}[u.status] || '';
+  const tone = {disponivel:'success', reservada:'warning', vendida:'danger', bloqueada:'neutral'}[u.status] || 'neutral';
+  const naProposta = state.pdfSelecao.includes(u.id);
+  const top = `
+    <div class="top" style="gap:14px;">
+      <div class="top-row"><button class="circ-btn" onclick="goBack()" aria-label="Voltar">${I.back}</button>${badge(tone, stLabel)}</div>
+      <div><span class="top-eyebrow" style="display:block; margin-bottom:3px;">${esc(e.nome)}</span><h1 class="top-title">Unidade ${esc(unitCode(u))}</h1></div>
+      <div><span class="top-label">Valor da unidade</span><div class="top-big">${brl(u.valor)}</div></div>
+    </div>`;
+  const body = `
+    <div class="planta-card"><div class="pi">${unitPlantaBlock(u)}</div></div>
+    <div class="stats-row">
+      <div class="stat-tile"><div class="n">${u.dorm}</div><div class="l">Dormitórios</div></div>
+      <div class="stat-tile"><div class="n">${u.metragem}</div><div class="l">m² privativos</div></div>
+      <div class="stat-tile"><div class="n">${u.vaga}</div><div class="l">${u.vaga>1?'Vagas':'Vaga'}</div></div>
+    </div>
+    <div class="kv-table">
+      ${u.horizontal
+        ? `<div class="kv-row"><span class="k">Bloco</span><span class="v">${esc(u.torre)}</span></div>`
+        : `<div class="kv-row"><span class="k">Torre / andar</span><span class="v">${esc(u.torre)} · ${u.andar}º</span></div>`}
+      <div class="kv-row"><span class="k">Suítes</span><span class="v">${u.suite}</span></div>
+      <div class="kv-row"><span class="k">Situação da obra</span><span class="v">${esc(e.status||'-')}</span></div>
+    </div>
+    ${disp ? `
+      <button class="btn btn-primary btn-lg" onclick="startWizard('${u.id}')">Iniciar reserva</button>
+      <div class="btn-row">
+        <button class="btn btn-secondary" onclick="simularUnidade('${u.id}')">Simular parcelas</button>
+        <button class="btn btn-secondary" onclick="abrirApresentacao('${u.empId}','${u.id}')">Mostrar ao cliente</button>
+      </div>
+      <button class="btn btn-ghost btn-lg" style="width:100%;" onclick="pdfToggleUnidadeDaTela('${u.id}')">${naProposta?'Remover da proposta':'Adicionar à proposta'}</button>
+    ` : `
+      <button class="btn btn-secondary btn-lg" onclick="abrirApresentacao('${u.empId}','${u.id}')">Mostrar ao cliente</button>
+      <button class="btn btn-secondary btn-lg" disabled>Unidade ${stLabel.toLowerCase()}</button>
+    `}`;
+  return {title:'Unidade', back:true, top, body};
+}
+function pdfToggleUnidadeDaTela(id){
+  const antes = state.pdfSelecao.includes(id);
+  const idx = state.pdfSelecao.indexOf(id);
+  if(idx>=0) state.pdfSelecao.splice(idx,1); else state.pdfSelecao.push(id);
+  render();
+  toast(antes ? 'Removida da proposta' : 'Adicionada à proposta');
+}
+
+/* ---------- modo apresentacao (tela cheia, sem comissao/status interno/botoes) ---------- */
+function abrirApresentacao(empId, unitId){
+  state.present = {empId, unitId: unitId||null, idx:0};
+  renderOverlays(true);
+}
+function fecharApresentacao(){ state.present = null; renderOverlays(true); }
+function presentationSlides(){
+  const p = state.present;
+  if(!p) return [];
+  const e = empById(p.empId);
+  if(!e) return [];
+  const u = p.unitId ? unitById(p.unitId) : null;
+  const fotos = empFotos(e).map(f=>({src:f.src, svg:f.svg||null, tag:f.tag, planta:false}));
+  const plantas = empPlantas(e, u).map(x=>({src:x.src||null, svg:x.svg||null, tag:'Planta', planta:true}));
+  return u ? [...plantas, ...fotos] : [...fotos, ...plantas];
+}
+function presGo(d){
+  const n = presentationSlides().length || 1;
+  state.present.idx = ((state.present.idx + d) % n + n) % n;
+  renderOverlays();
+}
+let _presTx = 0;
+function presTs(ev){ _presTx = ev.touches[0].clientX; }
+function presTe(ev){ const dx = ev.changedTouches[0].clientX - _presTx; if(Math.abs(dx) > 40) presGo(dx < 0 ? 1 : -1); }
+function presentationHtml(){
+  const p = state.present;
+  const slides = presentationSlides();
+  if(!slides.length) return '';
+  const e = empById(p.empId), u = p.unitId ? unitById(p.unitId) : null;
+  const n = slides.length, i = ((p.idx % n) + n) % n, s = slides[i];
+  const fundo = s.planta ? '#fff' : '#0E1316';
+  let img;
+  if(s.src) img = `<div class="stage-img" style="background-color:${fundo}; background-image:url('${s.src}'); background-size:${s.planta?'contain':'cover'};"></div>`;
+  else if(s.svg) img = `<div class="stage-img" style="background:${fundo}; display:flex; align-items:center; justify-content:center; padding:24px;"><div style="width:100%; max-height:100%;">${s.svg}</div></div>`;
+  else img = `<div class="stage-img" style="display:flex; align-items:center; justify-content:center;"><span class="spinner" style="border-color:rgba(255,255,255,.2); border-top-color:#fff; width:22px; height:22px;"></span></div>`;
+  const comod = (e.comodidades||[]).map(k=>AMENITIES[k]).filter(Boolean).slice(0,6);
+  return `
+    <div class="present" ontouchstart="presTs(event)" ontouchend="presTe(event)">
+      <div style="flex:1; position:relative; display:flex; flex-direction:column;">
+        ${img}
+        <div class="tb"><span class="tag">${esc(s.tag)} · ${i+1}/${n}</span><button class="x" onclick="fecharApresentacao()" aria-label="Sair da apresentação">${I.close}</button></div>
+        <button class="nav prev" onclick="presGo(-1)" aria-label="Anterior">${I.back}</button>
+        <button class="nav next" onclick="presGo(1)" aria-label="Próxima">${I.next}</button>
+      </div>
+      <div class="info">
+        <div class="dots">${slides.map((_,k)=>`<i style="width:${k===i?18:6}px; background:${k===i?'#fff':'rgba(255,255,255,.35)'};"></i>`).join('')}</div>
+        <div><div class="pn">${esc(e.nome)}</div><div class="ps">${esc([e.bairro, e.cidade].filter(Boolean).join(', '))}${e.status?' · '+esc(e.status):''}</div></div>
+        ${u ? `
+          <div class="unit">
+            <div><b style="font-size:15px; display:block;">Unidade ${esc(unitCode(u))}${u.horizontal?'':' · '+u.andar+'º andar'}</b><span style="font-size:12.5px; color:rgba(242,242,242,.7);">${u.dorm} dorm${u.suite?` · ${u.suite} suíte${u.suite>1?'s':''}`:''} · ${u.metragem} m²</span></div>
+            <b class="v">${brl(u.valor)}</b>
+          </div>` : `<div class="am">${comod.map(a=>`<span>${a.icon}${a.label}</span>`).join('')}</div>`}
+      </div>
+    </div>`;
+}
+
+/* ---------- proposta (PDF + WhatsApp) ---------- */
+function pdfToggleModoSelecao(){
+  state.pdfModoSelecao = !state.pdfModoSelecao;
+  render();
+}
+function pdfToggleUnidade(unitId){
+  const idx = state.pdfSelecao.indexOf(unitId);
+  if(idx>=0) state.pdfSelecao.splice(idx,1);
+  else state.pdfSelecao.push(unitId);
+  render();
+}
+function pdfRemoverUnidade(unitId){
+  const u = unitById(unitId);
+  const antes = state.pdfSelecao.slice();
+  state.pdfSelecao = state.pdfSelecao.filter(id=>id!==unitId);
+  render();
+  toast((u?unitCode(u):'Unidade')+' removida da proposta', ()=>{ state.pdfSelecao = antes; render(); });
+}
+function pdfLimparSelecao(){
+  const antes = state.pdfSelecao.slice();
+  state.pdfSelecao = [];
+  state.pdfModoSelecao = false;
+  render();
+  toast('Seleção limpa', ()=>{ state.pdfSelecao = antes; render(); });
+}
+function destinatariosProposta(){
+  const out = [];
+  DB.leads.filter(l=>!DB.clientes.some(c=>c.origemLeadId===l.id) && l.status!=='Convertido').forEach(l=>out.push({id:'l:'+l.id, nome:l.nome, tel:l.telefone}));
+  DB.clientes.forEach(c=>out.push({id:'c:'+c.id, nome:c.nome, tel:c.telefone}));
+  return out.filter(d=>d.nome);
+}
+function screenPropostaResumo(){
+  const unidades = state.pdfSelecao.map(id=>unitById(id)).filter(Boolean);
+  const total = unidades.reduce((s,u)=>s+(u.valor||0),0);
+  const top = `
+    <div class="top" style="gap:14px;">
+      <div class="top-row"><button class="circ-btn" onclick="goBack()" aria-label="Voltar">${I.back}</button><span class="top-eyebrow">Proposta</span></div>
+      <div><span class="top-label">Valor total · ${unidades.length} ${unidades.length===1?'unidade':'unidades'}</span><div class="top-big" style="font-size:34px;">${brl(total)}</div></div>
+    </div>`;
+  if(!unidades.length){
+    return {title:'Proposta', back:true, top, sheetClass:'tight', body:`
+      <div class="arti-card" style="flex-direction:column; text-align:center; padding:22px 18px;">
+        <img src="assets/arti-sentado.png" alt="" style="width:110px;">
+        <b style="font:700 16px var(--font-display); color:var(--charcoal-700);">Nenhuma unidade selecionada</b>
+        <span class="t" style="color:var(--grey-500);">Abra um empreendimento e toque em “Selecionar p/ proposta”.</span>
+        <button class="btn btn-secondary btn-sm" onclick="switchTab('empreendimentos')">Ver imóveis</button>
+      </div>`};
+  }
+  const dest = destinatariosProposta();
+  if(!state.propPara || !dest.some(d=>d.id===state.propPara)) state.propPara = dest.length ? dest[0].id : null;
+  const nomeCurto = n => { const p = String(n).split(/\s+/); return p[0]+(p[1]?' '+p[1][0]+'.':''); };
+  const body = `
+    ${unidades.map(u=>{
+      const e = empById(u.empId);
+      const f = e ? empFotos(e)[0] : null;
+      return `
+      <div class="list-card" style="cursor:default; padding:10px 12px;">
+        <div style="width:48px; height:48px; border-radius:12px; background:var(--charcoal-600) ${f&&f.src?`url('${f.src}') center/cover`:''}; flex:none;"></div>
+        <div style="flex:1; min-width:0; display:flex; flex-direction:column; gap:2px;">
+          <b style="font:700 16px var(--font-display); color:var(--charcoal-700);">${esc(unitCode(u))}</b>
+          <span class="sub-sm">${esc((e?e.nome:'')+' · '+u.metragem+' m²'+(u.suite?' · '+u.suite+' suíte'+(u.suite>1?'s':''):''))}</span>
+        </div>
+        <b style="font-size:14px; color:var(--charcoal-700); white-space:nowrap;">${mi(u.valor)}</b>
+        <button class="list-remove" onclick="pdfRemoverUnidade('${u.id}')" aria-label="Remover">${I.close}</button>
+      </div>`; }).join('')}
+    <div class="section-title" style="margin-top:8px;">Enviar para</div>
+    ${dest.length <= 8
+      ? `<div class="chip-row wrap">${dest.map(d=>`<button class="chip ${state.propPara===d.id?'active':''}" onclick="state.propPara='${d.id}'; render()">${esc(nomeCurto(d.nome))}</button>`).join('')}</div>`
+      : `<div class="field"><select onchange="state.propPara=this.value; render()">${dest.map(d=>`<option value="${d.id}" ${state.propPara===d.id?'selected':''}>${esc(d.nome)}</option>`).join('')}</select></div>`}
+    ${!dest.length ? `<div class="muted" style="font-size:12.5px; padding:0 4px;">Cadastre um lead ou conta para enviar pelo WhatsApp.</div>` : ''}
+    <div class="btn-stack" style="margin-top:6px;">
+      <button class="btn btn-primary btn-lg" ${dest.length?'':'disabled'} onclick="abrirWhatsProposta()">Enviar pelo WhatsApp</button>
+      <button class="btn btn-secondary btn-lg" ${state.pdfGerando?'disabled':''} onclick="gerarPropostaPDF()">${state.pdfGerando?'Preparando PDF...':'Baixar PDF'}</button>
+      <button class="btn btn-ghost btn-lg" style="width:100%;" onclick="pdfLimparSelecao()">Limpar seleção</button>
+    </div>`;
+  return {title:'Proposta', back:true, top, body, sheetClass:'tight'};
+}
+function mensagemPropostaPadrao(dest, unidades){
+  const empNomes = [...new Set(unidades.map(u=>(empById(u.empId)||{}).nome).filter(Boolean))];
+  const total = unidades.reduce((s,u)=>s+(u.valor||0),0);
+  const corretor = state.sfUsuarioNomeCompleto || state.sfUsuarioNome || 'Corretor(a)';
+  return 'Olá, '+primeiroNome(dest.nome)+'! Conforme conversamos, segue a proposta '+(unidades.length>1?'das unidades ':'da unidade ')+unidades.map(unitCode).join(', ')+(empNomes.length?' do '+empNomes.join(' e '):'')+'. Valor total: '+brl(total)+'.\n\nFico à disposição para tirar dúvidas ou agendar uma visita.\n'+corretor+' · Corretor';
+}
+function abrirWhatsProposta(){
+  const unidades = state.pdfSelecao.map(id=>unitById(id)).filter(Boolean);
+  const dest = destinatariosProposta().find(d=>d.id===state.propPara);
+  if(!dest || !unidades.length) return;
+  state.wa = {paraId: dest.id, nome: dest.nome, tel: dest.tel, msg: mensagemPropostaPadrao(dest, unidades), n: unidades.length};
+  renderOverlays(true);
+}
+function waHtml(){
+  const w = state.wa;
+  return `<div class="overlay" style="z-index:45;">
+    <div class="scrim" onclick="fecharPaineis()"></div>
+    <div class="panel grey">
+      <div class="grab"></div>
+      <div><div class="ph-eyebrow">Prévia da mensagem</div><div class="ph-title">Para ${esc(w.nome)}</div><div class="ph-sub">WhatsApp · ${esc(w.tel||'sem telefone')}</div></div>
+      <div class="wa-bubble">
+        <div class="wa-file"><span class="fi">${I.file}</span><span style="min-width:0;"><b>Proposta com ${w.n} ${w.n>1?'unidades':'unidade'}</b><span>O WhatsApp não anexa arquivos sozinho: baixe o PDF e anexe na conversa</span></span></div>
+        <textarea rows="6" aria-label="Mensagem" oninput="state.wa.msg=this.value">${esc(w.msg)}</textarea>
+      </div>
+      <button class="btn btn-primary btn-lg" ${w.tel?'':'disabled'} onclick="enviarWhatsProposta()">Enviar pelo WhatsApp</button>
+      <button class="btn btn-secondary" onclick="gerarPropostaPDF()">Baixar PDF para anexar</button>
+      <button class="cancel" onclick="fecharPaineis()">Cancelar</button>
+    </div>
+  </div>`;
+}
+function enviarWhatsProposta(){
+  const w = state.wa;
+  if(!w || !w.tel) return;
+  window.open('https://wa.me/55'+telDigitos(w.tel)+'?text='+encodeURIComponent(w.msg), '_blank', 'noopener');
+  state.wa = null;
+  renderOverlays(true);
+  toast('WhatsApp aberto para '+primeiroNome(w.nome));
+}
+
+
+/* =====================================================================================
+   REDESIGN 1b - negocios (reservas + negocios), reserva, negocio, visitas
+   ===================================================================================== */
+function protocoloLabel(r){
+  const p = r.protocolo || '';
+  return /^[a-zA-Z0-9]{15,18}$/.test(p) ? '' : p;
+}
+function fmtPct(x){ return (x*100).toLocaleString('pt-BR',{maximumFractionDigits:1})+'%'; }
+const ESTAGIOS_NEGOCIO = ['proposta enviada','aguardando aprovacoes','confeccao de contrato','aguardando assinatura','contrato assinado','fechado ganho'];
+function negocioEstagioIdx(n){
+  if(n.fechada) return n.ganha ? ESTAGIOS_NEGOCIO.length : -1;
+  const s = semAcento(n.stageName);
+  const i = ESTAGIOS_NEGOCIO.indexOf(s);
+  return i;
+}
+function segsHtml(idx, total, dark){
+  return `<div class="segs ${dark?'dark':''}" style="grid-template-columns:repeat(${total},1fr);">${Array.from({length:total}).map((_,i)=>`<i class="${i<idx?'done':i===idx?'cur':''}"></i>`).join('')}</div>`;
+}
+
+/* ---------- NEGOCIOS (Reservas | Negocios) ---------- */
+function resCard(r){
+  const nome = resNomeCliente(r);
+  const prot = protocoloLabel(r);
+  return `
+    <button class="list-card" style="flex-direction:column; align-items:stretch; gap:10px; padding:14px;" onclick="go('resDetail',{id:'${r.id}'})">
+      <span style="display:flex; justify-content:space-between; align-items:center; gap:8px;">
+        <span class="overline" style="letter-spacing:.12em; font-size:10.5px;">${esc(prot || 'Reserva')}</span>${badge(resTone(r.status), esc(r.status))}
+      </span>
+      <span style="display:flex; justify-content:space-between; align-items:flex-end; gap:10px;">
+        <span style="min-width:0; display:flex; flex-direction:column; gap:2px;"><b style="font-size:15.5px; color:var(--charcoal-700);">${esc(nome)}</b><span class="sub-sm">${esc(resNomeEmpreendimento(r)+' · '+resNomeUnidade(r))}</span></span>
+        ${r.valor ? `<b style="font:700 16px var(--font-display); color:var(--charcoal-700); white-space:nowrap;">${mi(r.valor)}</b>` : ''}
+      </span>
+    </button>`;
+}
+function negocioCard(n){
+  const idx = negocioEstagioIdx(n);
+  const eyebrow = n.empreendimentoNome ? n.empreendimentoNome+' · '+negocioUnidadeCurta(n) : (n.unidadeNome||'Negócio');
+  return `
+    <button class="list-card" style="flex-direction:column; align-items:stretch; gap:10px; padding:14px;" onclick="state.negTab='resumo'; go('negocioDetail',{id:'${n.id}'})">
+      <span style="display:flex; justify-content:space-between; align-items:center; gap:8px;">
+        <span class="overline" style="letter-spacing:.12em; font-size:10.5px; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${esc(eyebrow)}</span>${badge(negocioStageTone(n), esc(n.stageName||''))}
+      </span>
+      <span style="display:flex; justify-content:space-between; align-items:flex-end; gap:10px;">
+        <span style="min-width:0;"><b style="font-size:15.5px; color:var(--charcoal-700);">${esc(n.clienteNome||n.nome||'-')}</b></span>
+        ${n.valor ? `<b style="font:700 16px var(--font-display); color:var(--charcoal-700); white-space:nowrap;">${mi(n.valor)}</b>` : ''}
+      </span>
+      ${idx>=0 ? segsHtml(idx, ESTAGIOS_NEGOCIO.length) : ''}
+    </button>`;
+}
+function negocioStageTone(n){
+  if(n.fechada) return n.ganha ? 'success' : 'danger';
+  const idx = negocioEstagioIdx(n);
+  return idx>=4 ? 'success' : 'sky';
+}
+function screenNegociosHub(){
+  const seg = state.segN === 'negocios' ? 'negocios' : 'reservas';
+  if(seg==='negocios' && !state.sfNegociosLoaded) sfCarregarNegocios();
+  const topExtra = `
+    <div class="seg">
+      <button class="${seg==='reservas'?'on':''}" onclick="state.segN='reservas'; render({resetScroll:true})">Reservas · ${DB.reservas.length}</button>
+      <button class="${seg==='negocios'?'on':''}" onclick="state.segN='negocios'; render({resetScroll:true})">Negócios · ${DB.negocios.length}</button>
+    </div>`;
+  let body;
+  if(seg==='reservas'){
+    body = DB.reservas.length ? DB.reservas.map(resCard).join('') : `<div class="empty">Nenhuma reserva ainda</div>`;
+  } else {
+    body = !state.sfNegociosLoaded
+      ? `<div class="sync-row" style="margin-top:20px;"><span class="spinner"></span> Carregando negócios...</div>`
+      : DB.negocios.length ? DB.negocios.map(negocioCard).join('') : `<div class="empty">Nenhum negócio ainda</div>`;
+  }
+  return {title:'Negócios', back:false, topExtra, body, sheetClass:'tight'};
+}
+
+/* ---------- RESERVA ---------- */
+const AP_INFO = {
+  aguardando:['Aguardando','warning','var(--color-warning)'],
+  contraproposta:['Contraproposta','sky','var(--sky-500)'],
+  aprovado:['Aprovado','success','var(--color-success)'],
+  recusado:['Recusado','danger','var(--color-danger)'],
+};
+function aprovacaoCardHtml(r){
+  const a = r.aprovacao;
+  if(!a || !a.status || a.status==='nao_requer') return '';
+  const info = AP_INFO[a.status] || ['','neutral','var(--grey-200)'];
+  const aguard = a.status==='aguardando', contra = a.status==='contraproposta', aprov = a.status==='aprovado', recus = a.status==='recusado';
+  const pedido = a.valorPedido!=null ? a.valorPedido : r.valor;
+  const descPed = a.descontoPedido!=null ? a.descontoPedido : (a.valorTabela ? (a.valorTabela-pedido)/a.valorTabela : 0);
+  const cLabel = aguard ? 'Gerente Comercial' : contra ? 'Contraproposta' : aprov ? 'Valor aprovado' : 'Resposta';
+  const cVal = aguard ? '—' : recus ? 'Recusado' : brl(contra ? a.valorContraproposta : (aprov && a.valorContraproposta ? a.valorContraproposta : pedido));
+  const cSub = (contra || (aprov && a.descontoContraproposta!=null)) && a.descontoContraproposta!=null ? '−'+fmtPct(a.descontoContraproposta)+' da tabela' : '';
+  const cBg = contra ? 'var(--sky-100)' : aprov ? 'var(--color-success-soft)' : recus ? 'var(--color-danger-soft)' : 'var(--grey-50)';
+  return `
+    <div class="approval" style="border-color:${info[2]};">
+      <div class="hd"><span class="overline">Aprovação do desconto</span>${badge(info[1], info[0])}</div>
+      <div class="two">
+        <div><span>Você pediu</span><b>${brl(pedido)}</b><span>−${fmtPct(descPed)} da tabela</span></div>
+        <div style="background:${cBg};"><span>${cLabel}</span><b>${cVal}</b><span>${cSub}</span></div>
+      </div>
+      ${a.mensagem && !aguard ? `<div class="msg">${a.respondidoPor?esc(a.respondidoPor):'Gerente Comercial'}: ${esc(a.mensagem)}</div>` : ''}
+      ${contra ? `<div class="btn-row"><button class="btn btn-secondary" id="ap-recusar" onclick="responderContraproposta('${r.id}','recusar')">Recusar</button><button class="btn btn-primary" id="ap-aceitar" style="flex:2;" onclick="responderContraproposta('${r.id}','aceitar')">Aceitar contraproposta</button></div>` : ''}
+    </div>`;
+}
+/* POST /reservas/{id}/contraproposta (HU "Contraproposta de desconto", secao 5.5) - o corretor
+   aceita ou recusa a contraproposta do Gerente Comercial. A tela so' mostra o cartao quando a API
+   devolve o bloco "aprovacao" na reserva. */
+function responderContraproposta(id, acao){
+  ['ap-aceitar','ap-recusar'].forEach(b=>{ const el = $(b); if(el) el.disabled = true; });
+  sfApi(`/reservas/${id}/contraproposta`, {method:'POST', body:JSON.stringify({acao})})
+    .then(()=>{
+      toast(acao==='aceitar' ? 'Contraproposta aceita' : 'Contraproposta recusada');
+      return sfCarregarReservas();
+    })
+    .catch(e=>{
+      render();
+      toast('Nao foi possivel responder: '+e.message);
+    });
+}
+function timelineHtml(passos){
+  return `<div class="timeline">${passos.map((p,i)=>{
+    const st = p.status; // done | atual | todo
+    const ultimo = i===passos.length-1;
+    return `<div class="tl-item">
+      <div class="tl-dot-wrap"><div class="tl-dot ${st==='done'?'done':st==='atual'?'atual':''}">${st==='done'?I.check:''}</div><div class="tl-line ${st==='done'?'done':''}"></div></div>
+      <div class="tl-body"><b class="${st==='todo'?'todo':''}">${esc(p.titulo)}</b><span>${esc(p.quando||'')}</span></div>
+    </div>`; }).join('')}</div>`;
+}
+function screenResDetail(id){
+  const r = reservaById(id);
+  const nome = resNomeCliente(r), unidadeNome = resNomeUnidade(r), empNome = resNomeEmpreendimento(r);
+  const prot = protocoloLabel(r);
+  const seriePagamentosItems = (r.series && r.series.length)
+    ? r.series.map(s=>({tipo:s.tipo, parcelas:s.parcelas, periodicidade: s.primeiroVencimento ? ('a partir de '+fmtDataBR(s.primeiroVencimento)) : '', valor:s.valor}))
+    : (r.pagamentos || []);
+  const ap = r.aprovacao;
+  const apPendente = ap && ap.status && ap.status!=='nao_requer' && ap.status!=='aprovado';
+  const passos = r.real ? [
+    {titulo:'Reserva criada', status:'done', quando:r.data},
+    ...(ap && ap.status && ap.status!=='nao_requer' ? [{titulo:'Aprovação do desconto', status: ap.status==='aprovado' ? 'done' : 'atual', quando:({aguardando:'Aguardando Gerente Comercial', contraproposta:'Contraproposta recebida', aprovado:'Aprovado', recusado:'Recusado'})[ap.status]}] : []),
+    {titulo:'Documentação em análise', status: r.documentacaoEmAnalise ? 'done' : apPendente ? 'todo' : 'atual', quando: r.documentacaoEmAnalise ? 'Concluído' : apPendente ? 'Pendente' : 'Em andamento'},
+    {titulo:'Aprovação da incorporadora', status: r.aprovadoIncorporadora ? 'done' : 'todo', quando: r.aprovadoIncorporadora ? 'Concluído' : 'Pendente'},
+    {titulo:'Contrato assinado', status: r.contratoAssinado ? 'done' : 'todo', quando: r.contratoAssinado ? 'Concluído' : 'Pendente'},
+  ] : [
+    {titulo:'Reserva criada', status:'done', quando:r.data},
+    {titulo:'Documentação em análise', status: r.status==='Em analise' ? 'atual' : 'done', quando: r.status==='Em analise' ? 'Em andamento' : r.data},
+    {titulo:'Aprovação da incorporadora', status: r.status==='Assinada' ? 'done' : 'todo', quando: r.status==='Assinada' ? r.data : 'Pendente'},
+    {titulo:'Contrato assinado', status: r.status==='Assinada' ? 'done' : 'todo', quando: r.status==='Assinada' ? r.data : 'Pendente'},
+  ];
+  const sf = (sfSessionGet()||{}).instanceUrl;
+  const top = `
+    <div class="top" style="gap:14px;">
+      <div class="top-row"><button class="circ-btn" onclick="goBack()" aria-label="Voltar">${I.back}</button>${badge(resTone(r.status), esc(r.status))}</div>
+      <div style="display:flex; flex-direction:column; gap:4px;">
+        <span class="top-eyebrow" style="letter-spacing:.12em;">${esc([prot, r.data].filter(Boolean).join(' · '))}</span>
+        <h1 class="id-name" style="font-size:24px; margin:0;">${esc(nome)}</h1>
+        <span class="top-sub">${esc(empNome+' · Unidade '+unidadeNome)}</span>
+      </div>
+      <div class="top-big">${brl(r.valor)}</div>
+    </div>`;
+  const body = `
+    ${aprovacaoCardHtml(r)}
+    <div class="section-title" style="margin-top:2px;">Andamento</div>
+    ${timelineHtml(passos)}
+    ${seriePagamentosItems.length ? `
+      <div class="section-title">Série de pagamentos</div>
+      <div class="group">
+        ${seriePagamentosItems.map(p=>`<div class="serie-row"><div style="min-width:0;"><b>${esc(p.tipo)}</b><span class="d">${p.parcelas>1?p.parcelas+'x ':''}${esc(p.periodicidade||'')}${p.quando?' · '+esc(p.quando):''}</span></div><span class="val">${brl(p.valor)}</span></div>`).join('')}
+      </div>` : ''}
+    <div class="btn-stack" style="margin-top:4px;">
+    ${r.real ? `
+      ${r.temCotacao ? `<div class="alert-card ok" style="align-items:center;">${I.checkc}<b style="color:var(--color-success);">Cotação criada no Salesforce</b></div>` : `
+        <button class="btn btn-primary btn-lg" ${r.criandoCotacao?'disabled':''} onclick="criarCotacaoDaReserva('${r.id}')">${r.criandoCotacao ? '<span class="spinner" style="border-top-color:#fff;"></span> Criando Cotação...' : 'Criar Cotação'}</button>`}
+      ${r.termoContentVersionId ? `<button class="btn btn-secondary btn-lg" onclick="sfAbrirPdf('${r.termoContentVersionId}')">Ver termo de reserva</button>` : `
+        <button class="btn btn-secondary btn-lg" ${r.gerandoTermo?'disabled':''} onclick="sfGerarTermoReserva('${r.id}')">${r.gerandoTermo ? '<span class="spinner"></span> Gerando termo...' : 'Gerar termo de reserva'}</button>`}
+      ${r.negociacaoId ? `<button class="btn btn-secondary btn-lg" onclick="state.negTab='resumo'; switchTab('negocios'); go('negocioDetail',{id:'${r.negociacaoId}'})">Ver negócio completo</button>` : ''}
+      <a class="btn btn-secondary btn-lg" href="${sf}/lightning/r/CA_Reserva__c/${r.id}/view" target="_blank" rel="noopener">Abrir no Salesforce ${I.ext}</a>
+    ` : `<button class="btn btn-secondary btn-lg" onclick="toast('Disponível na versão conectada ao Salesforce')">Abrir no Salesforce ${I.ext}</button>`}
+    </div>`;
+  return {title: r.status==='Assinada' ? 'Contrato' : 'Reserva', back:true, top, body};
+}
+
+/* ---------- NEGOCIO ---------- */
+function negocioCliente(n){
+  return DB.clientes.find(c=>c.nome && n.clienteNome && c.nome.trim().toLowerCase()===n.clienteNome.trim().toLowerCase()) || null;
+}
+function screenNegocioDetail(id){
+  sfCarregarNegocioDetalhe(id);
+  sfCarregarContratosNegocio(id);
+  const n = negocioById(id);
+  if(!n){
+    return {title:'Negócio', back:true, body:`<div class="sync-row"><span class="spinner"></span> Carregando...</div>`};
+  }
+  const linha = n.linhaDoTempo || [];
+  const idx = negocioEstagioIdx(n);
+  const cli = negocioCliente(n);
+  if(cli && cli.real) sfCarregarDocumentos(cli.id);
+  const dk = cli ? docsPendentes(cli) : null;
+  let tab = state.negTab || 'resumo';
+  if(tab==='docs' && !cli) tab = 'resumo';
+  const sf = (sfSessionGet()||{}).instanceUrl;
+  const etapa = n.fechada ? (n.ganha ? 'Concluído' : 'Encerrado') : (n.stageName||'-');
+  const top = `
+    <div class="top" style="gap:14px;">
+      <div class="top-row"><button class="circ-btn" onclick="goBack()" aria-label="Voltar">${I.back}</button>${badge(negocioStageTone(n), esc(n.stageName||''))}</div>
+      <div style="display:flex; flex-direction:column; gap:4px;">
+        <span style="font-size:13px; color:rgba(242,242,242,.75);">${esc([n.clienteNome, n.empreendimentoNome ? n.empreendimentoNome+' · '+negocioUnidadeCurta(n) : n.unidadeNome].filter(Boolean).join(' · '))}</span>
+        ${n.valor ? `<div class="top-big" style="font-size:34px;">${brl(n.valor)}</div>` : ''}
+      </div>
+      <div style="display:flex; flex-direction:column; gap:8px;">
+        <div style="display:flex; justify-content:space-between; font-size:12.5px;"><span>Etapa atual · <b>${esc(etapa)}</b></span>${n.dataFechamento ? `<span style="color:rgba(242,242,242,.65);">Prev. ${fmtDataBR(String(n.dataFechamento).slice(0,10))}</span>` : ''}</div>
+        ${idx>=0 ? segsHtml(idx, ESTAGIOS_NEGOCIO.length, true) : ''}
+      </div>
+    </div>`;
+  const tabs = `
+    <div class="utabs">
+      <button class="${tab==='resumo'?'on':''}" onclick="state.negTab='resumo'; render()">Resumo</button>
+      ${cli ? `<button class="${tab==='docs'?'on':''}" onclick="state.negTab='docs'; render()">Documentos</button>` : ''}
+      <button class="${tab==='and'?'on':''}" onclick="state.negTab='and'; render()">Andamento</button>
+    </div>`;
+  let panel = '';
+  if(tab==='resumo'){
+    const kv = [];
+    if(n.valor) kv.push(['Valor', brl(n.valor)]);
+    if(n.dataFechamento) kv.push(['Previsão de fechamento', fmtDataBR(String(n.dataFechamento).slice(0,10))]);
+    if(n.casoCreditoStatus) kv.push(['Análise de crédito', n.casoCreditoStatus]);
+    if(n.casoJuridicoStatus) kv.push(['Jurídico', n.casoJuridicoStatus]);
+    panel = `
+      ${dk && dk.pend>0 && !n.fechada ? `<div class="alert-card warn" style="align-items:center;">${I.alertc}<div style="flex:1;"><b>${dk.pend} ${dk.pend>1?'documentos pendentes':'documento pendente'}</b><div class="muted" style="font-size:12px;">Bloqueia a análise de crédito</div></div><button class="btn btn-primary btn-sm" onclick="state.negTab='docs'; render()">Resolver</button></div>` : ''}
+      ${kv.length ? `<div class="kv-table">${kv.map(([k,v])=>`<div class="kv-row"><span class="k">${k}</span><span class="v">${esc(v)}</span></div>`).join('')}</div>` : ''}
+      ${negocioContratoSection(n)}
+      <a class="btn btn-secondary btn-lg" href="${sf}/lightning/r/Opportunity/${n.id}/view" target="_blank" rel="noopener">Abrir no Salesforce ${I.ext}</a>`;
+  } else if(tab==='docs' && cli){
+    panel = documentosChecklist(cli);
+  } else {
+    panel = timelineHtml(linha.map(p=>({
+      titulo:p.estagio,
+      status: p.status==='concluido' ? 'done' : p.status==='atual' ? 'atual' : 'todo',
+      quando: (p.status==='concluido'?'Concluído':p.status==='atual'?'Em andamento':p.status==='nao_aplicavel'?'-':'Pendente')+(p.detalhe?' · '+p.detalhe:''),
+    })));
+  }
+  return {title:'Negócio', back:true, top, body: tabs + panel};
+}
+function negocioContratoSection(n){
+  const contratos = state.sfContratosNegocio[n.id];
+  return `
+    <div class="section-title" style="margin-top:2px;">Contrato</div>
+    ${contratos == null
+      ? `<div class="sync-row" style="padding:6px 0;"><span class="spinner"></span> Carregando contrato...</div>`
+      : contratos.length
+        ? `<div class="stack">${contratos.map(c=>contratoCard(c, n.id)).join('')}</div>`
+        : `<div class="empty">Contrato ainda não gerado · é gerado depois da aprovação do jurídico</div>`}`;
+}
+function contratoCard(c, negocioId){
+  const statusAssinatura = c.statusAssinatura || 'Não enviado';
+  return `
+    <div class="card" style="padding:14px; display:flex; flex-direction:column; gap:12px;">
+      <div style="display:flex; align-items:center; gap:12px;">
+        <span class="ic-badge">${I.file}</span>
+        <div style="flex:1; min-width:0;"><b class="title-sm" style="font-size:14px;">${esc(c.tipo || 'Contrato')}</b>${(c.dataEnvioAssinatura||c.dataAssinatura) ? `<div class="sub-sm">${c.dataAssinatura ? 'Assinado em '+sfDataHora(c.dataAssinatura) : 'Enviado em '+sfDataHora(c.dataEnvioAssinatura)}</div>` : ''}</div>
+        ${badge(statusAssinatura==='Assinado'?'success':'sky', esc(statusAssinatura))}
+      </div>
+      <div class="btn-row">
+        ${!c.contentVersionId
+          ? `<button class="btn btn-primary btn-sm" style="min-height:44px;" ${c.gerandoPdf?'disabled':''} onclick="sfGerarPdfContrato('${c.id}','${negocioId}')">${c.gerandoPdf?'<span class="spinner" style="border-top-color:#fff;"></span> Gerando...':'Gerar PDF do contrato'}</button>`
+          : `<button class="btn btn-secondary btn-sm" style="min-height:44px;" onclick="sfAbrirPdf('${c.contentVersionId}')">Ver PDF do contrato</button>`}
+        ${statusAssinatura==='Não enviado'
+          ? `<button class="btn btn-secondary btn-sm" style="min-height:44px;" ${c.atualizandoStatus?'disabled':''} onclick="sfAvancarStatusContrato('${c.id}','${negocioId}')">Enviar para assinatura</button>`
+          : statusAssinatura==='Enviado para assinatura'
+            ? `<button class="btn btn-secondary btn-sm" style="min-height:44px;" ${c.atualizandoStatus?'disabled':''} onclick="sfAvancarStatusContrato('${c.id}','${negocioId}')">Marcar como assinado</button>`
+            : ''}
+      </div>
+    </div>`;
+}
+
+/* ---------- visitas ---------- */
+function visitaCard(v){
+  const l = leadById(v.leadId);
+  const MES = ['JAN','FEV','MAR','ABR','MAI','JUN','JUL','AGO','SET','OUT','NOV','DEZ'];
+  const [y,m,d] = (v.data||'').split('-');
+  return `
+    <button class="visit-card" onclick="switchTab('leads'); go('leadDetail',{id:'${l.id}'})">
+      <span class="d"><b>${d||'--'}</b><span>${m?MES[+m-1]:''}</span></span>
+      <span class="t"><b>${esc(l.nome)}</b><span>${esc([v.hora, v.local].filter(Boolean).join(' · ')||'Local a definir')}</span></span>
+    </button>`;
+}
+
+
+/* =====================================================================================
+   REDESIGN 1b - nova reserva (3 passos: Cliente, Pagamento, Revisao) + modo simulacao
+   A logica de negocio e as chamadas sfApi sao as mesmas de antes; so' a apresentacao mudou.
+   Passos internos (w.step): 1 cliente - 2 tipo de venda (so' se o empreendimento tem mais de um
+   habilitado) - 3 pagamento - 4 revisao - 5 resultado.
+   ===================================================================================== */
+function startWizard(unitId, opts){
+  opts = opts || {};
+  const u = unitById(unitId);
+  const e = empById(u.empId);
+  const tiposHabilitados = (u.real && e && e.tiposVendaHabilitados && e.tiposVendaHabilitados.length) ? e.tiposVendaHabilitados : [];
+  state.mode = 'wizard';
+  state.sheet = null;
+  state.wizard = {
+    step: opts.sim ? (tiposHabilitados.length>1 ? 2 : 3) : 1, unitId, empId:u.empId, sim: !!opts.sim,
+    clienteId: opts.sim ? null : (state.context.preselectCliente || null),
+    negociacaoEscolha: null,
+    novoClienteMode:false,
+    pagamentos:[],
+    tabelaId:null, seriesEditor:null, tabelaOficialAberta:false,
+    tiposVendaHabilitados: tiposHabilitados,
+    tipoVenda: tiposHabilitados.length>1 ? null : (tiposHabilitados[0] || 'Financiamento Direto'),
+    motivo:'', obs:'', aceite:false, protocolo:null, syncing:false, erro:null,
+  };
+  if(!opts.sim) state.context.preselectCliente = null;
+  render({resetScroll:true});
+  if(state.wizard.clienteId){ sfCarregarContaDetalhe(state.wizard.clienteId).then(()=>render()); }
+}
+function simularUnidade(unitId){ startWizard(unitId, {sim:true}); }
+function wizardTemTipo(w){ return w.tiposVendaHabilitados.length > 1; }
+function wizardSair(){ state.mode='tabs'; state.wizard=null; render({resetScroll:true}); }
+function wizardBack(){
+  const w = state.wizard;
+  if(w.novoClienteMode){ w.novoClienteMode=false; render({resetScroll:true}); return; }
+  if(w.erro){ w.erro = null; w.step = 4; render({resetScroll:true}); return; }
+  if(w.step===5){ wizardSair(); return; }
+  if(w.sim){
+    if(w.step===3 && wizardTemTipo(w)){ w.step = 2; render({resetScroll:true}); return; }
+    wizardSair(); return;
+  }
+  if(w.step===3 && !wizardTemTipo(w)){ w.step = 1; render({resetScroll:true}); return; }
+  if(w.step>1){ w.step--; render({resetScroll:true}); return; }
+  wizardSair();
+}
+function wizardGoto(step){ state.wizard.step = step; render({resetScroll:true}); }
+function wizardAvancar(){ wizardGoto(wizardTemTipo(state.wizard) ? 2 : 3); }
+function wizardReservarComCondicao(){
+  const w = state.wizard;
+  w.sim = false; w.step = 1;
+  render({resetScroll:true});
+  toast('Agora escolha a conta do comprador');
+}
+function wizardPassosVisiveis(w){
+  const nomes = {1:'cliente', 2:'tipo', 3:'pagamento', 4:'revisao'};
+  const lista = ['cliente'].concat(wizardTemTipo(w) ? ['tipo'] : [], ['pagamento','revisao']);
+  return {n: lista.length, cur: Math.max(1, lista.indexOf(nomes[w.step]) + 1)};
+}
+
+/* ---------- passo 1: cliente ---------- */
+function wizardPasso1(w, u, e){
+  if(w.novoClienteMode){
+    return {html:`
+      <div class="field"><label for="wc-nome">Nome completo</label><input id="wc-nome" placeholder="Ex.: Camila Duarte"></div>
+      <div class="field-row">
+        <div class="field"><label for="wc-cpf">CPF</label><input id="wc-cpf" placeholder="000.000.000-00"></div>
+        <div class="field"><label for="wc-tel">Telefone</label><input id="wc-tel" placeholder="(41) 99999-0000"></div>
+      </div>
+      <div class="field"><label for="wc-email">E-mail</label><input id="wc-email" type="email" placeholder="nome@email.com"></div>`,
+      next:{label: w.criandoConta ? 'Cadastrando...' : 'Salvar e continuar', disabled: !!w.criandoConta, fn:'wizardSaveNovoCliente()'}};
+  }
+  const clienteSel = w.clienteId ? clienteById(w.clienteId) : null;
+  const buscaResultados = (w.buscaResultados||[]).filter(bc=>!DB.clientes.some(c=>c.id===bc.id));
+  const radio = (c, sel, fn) => {
+    const d = c.cpf ? 'CPF '+esc(c.cpf) : '';
+    return `
+      <div class="radio-card ${sel?'sel':''}" onclick="${fn}">
+        <span class="radio-dot"></span>
+        <span style="flex:1; min-width:0; display:flex; flex-direction:column; gap:2px;"><b class="title-sm">${esc(c.nome)}</b><span class="sub-sm">${d}</span></span>
+        ${c.documentosReais || !c.real ? docsBadgeMini(c) : ''}
+      </div>`;
+  };
+  const alertaNeg = (clienteSel && clienteSel.negociacaoAbertaId && w.negociacaoEscolha!=='nova') ? (w.negociacaoEscolha==='existente' ? `
+      <div class="alert-card warn">${I.checkc}<div><b>Vai entrar na reserva em andamento</b><div class="muted" style="font-size:12px; margin-top:2px;">${esc(clienteSel.negociacaoAbertaUnidade||'unidade não identificada')} · ${esc(clienteSel.negociacaoAbertaStage||'')}</div>
+        <button class="link-btn" style="padding:6px 0 0;" onclick="wizardCriarReservaSeparada()">Desfazer, criar reserva separada</button></div></div>` : `
+      <div class="alert-card warn">${I.alertc}<div style="flex:1;"><b>${esc(clienteSel.nome)} já tem uma reserva em andamento</b><div class="muted" style="font-size:12px; margin-top:2px;">${esc(clienteSel.negociacaoAbertaUnidade||'unidade não identificada')} · ${esc(clienteSel.negociacaoAbertaStage||'')}</div>
+        ${clienteSel.negociacaoAbertaTemAtiva ? `
+          <div class="muted" style="font-size:12px; margin-top:6px;">Essa unidade ainda está Ativa — o Salesforce só permite uma reserva ativa por negociação. Cancele-a (na tela de Reservas) antes de poder somar outra unidade aqui.</div>
+          <div style="margin-top:8px;"><button class="btn btn-secondary btn-sm" onclick="wizardCriarReservaSeparada()">Criar reserva separada mesmo assim</button></div>
+        ` : `
+          <div style="display:flex; gap:8px; margin-top:8px; flex-wrap:wrap;">
+            <button class="btn btn-primary btn-sm" onclick="wizardUsarReservaExistente()">Adicionar a essa reserva</button>
+            <button class="btn btn-secondary btn-sm" onclick="wizardCriarReservaSeparada()">Criar reserva separada</button>
+          </div>`}
+      </div></div>`) : '';
+  return {html:`
+    ${u.real ? `
+      <div class="search-wrap">${I.search}<input id="wz-busca-conta" placeholder="Buscar conta por nome ou CPF" onkeydown="if(event.key==='Enter'){event.preventDefault(); wizardBuscarConta();}"></div>
+      <button class="btn btn-secondary" onclick="wizardBuscarConta()">${I.search} Buscar no Salesforce</button>` : ''}
+    <div class="stack">
+      ${buscaResultados.map(c=>radio(c, false, `wizardSelectContaBusca('${c.id}')`)).join('')}
+      ${DB.clientes.map(c=>radio(c, w.clienteId===c.id, `wizardSelectCliente('${c.id}')`)).join('')}
+    </div>
+    <button class="btn btn-ghost" style="width:100%;" onclick="wizardShowNovoCliente()">${I.plus} Cadastrar nova conta</button>
+    ${clienteSel ? documentosChecklist(clienteSel) : ''}
+    ${alertaNeg}`,
+    next:{label:'Continuar', disabled: !w.clienteId, fn:'wizardAvancar()'}};
+}
+
+/* ---------- passo 2: tipo de venda ---------- */
+function wizardTipoVendaBody(tipos){
+  return `
+    <div class="stack">
+      ${tipos.map(t=>`
+        <button class="list-card" onclick="wizardSelecionarTipoVenda('${t}')">
+          <span class="ic-badge">${I.calendar}</span>
+          <span style="flex:1; min-width:0; display:flex; flex-direction:column; gap:2px;"><b class="title-sm" style="font-size:14px;">${t}</b><span class="sub-sm" style="white-space:normal;">${TIPO_VENDA_DESCRICOES[t]||''}</span></span>
+          <span class="list-card-chevron">${I.next}</span>
+        </button>`).join('')}
+    </div>`;
+}
+
+/* ---------- passo 3: pagamento ---------- */
+function calcularDiferencaTabelaProposta(u, tabela, seriesEditor){
+  const totalTabela = tabela.series.reduce((s,x)=> s + (u.valor * (x.percentual||0) / 100), 0);
+  const totalProposta = (seriesEditor||[]).reduce((s,l)=>s+(l.quantidade*l.valor),0);
+  const diferenca = totalProposta - totalTabela;
+  const diferencaPerc = totalTabela>0 ? (diferenca/totalTabela*100) : 0;
+  return {totalTabela, totalProposta, diferenca, diferencaPerc};
+}
+function serieLinhaHtml(nome, det, valor){
+  return `<div class="serie-row"><div style="min-width:0;"><b>${esc(nome)}</b><span class="d">${esc(det)}</span></div><span class="val">${valor}</span></div>`;
+}
+function wizardAtalhoDesconto(p){
+  const w = state.wizard, u = unitById(w.unitId);
+  const tabela = (state.sfTabelasVendasCache[w.empId]||[]).find(t=>t.id===w.tabelaId);
+  if(!tabela) return;
+  w.seriesEditor = tabela.series.map(s=>{
+    const q = s.quantidade||1;
+    return {catalogoId:s.catalogoId, nome:s.nome, percentual:s.percentual, ordem:s.ordem||0, quantidade:q,
+      valor: Math.round((u.valor*(s.percentual||0)/100/q)*(1-p)*100)/100};
+  });
+  render();
+}
+function wizardRestaurarPadrao(){
+  const w = state.wizard;
+  wizardSelecionarTabela(w.tabelaId);
+}
+function wizardCompensar(){
+  const w = state.wizard, u = unitById(w.unitId);
+  const tabela = (state.sfTabelasVendasCache[w.empId]||[]).find(t=>t.id===w.tabelaId);
+  if(!tabela || !w.seriesEditor || !w.seriesEditor.length) return;
+  const d = calcularDiferencaTabelaProposta(u, tabela, w.seriesEditor);
+  const gap = d.totalTabela - d.totalProposta;
+  if(Math.abs(gap) < 0.5) return;
+  let idx = w.seriesEditor.findIndex(s=>/p[óo]s/i.test(s.nome));
+  if(idx<0) idx = w.seriesEditor.length-1;
+  const s = w.seriesEditor[idx];
+  const q = s.quantidade || 1;
+  s.valor = Math.max(0, Math.round(((q*s.valor)+gap)/q*100)/100);
+  render();
+  toast('Diferença compensada em '+String(s.nome).replace(/\s*\(.*\)/,'').toLowerCase());
+}
+function serieEditorBody(u, w){
+  const tabela = (state.sfTabelasVendasCache[w.empId]||[]).find(t=>t.id===w.tabelaId);
+  const sanidadeOk = wizardSerieSanidadeOk();
+  if(!tabela) return {html:'', next:null};
+  const d = calcularDiferencaTabelaProposta(u, tabela, w.seriesEditor);
+  const desc = d.totalTabela ? (d.totalTabela - d.totalProposta)/d.totalTabela : 0;
+  const needsAprov = desc > 0.10;
+  const gap = d.totalTabela - d.totalProposta;
+  const vistos = {};
+  const linhas = w.seriesEditor.map((s,idx)=>{
+    const origem = tabela.series.find(x=>x.catalogoId===s.catalogoId);
+    const primeira = !vistos[s.catalogoId]; vistos[s.catalogoId] = true;
+    const origTotal = (origem && primeira) ? u.valor*(origem.percentual||0)/100 : 0;
+    const sub = s.quantidade*s.valor;
+    const dif = sub - origTotal;
+    const difTxt = !primeira ? 'Linha adicional' : Math.abs(dif)<1 ? 'Igual à tabela' : (dif<0 ? '− ' : '+ ')+brl(Math.abs(dif));
+    const difCor = !primeira ? 'var(--grey-500)' : Math.abs(dif)<1 ? 'var(--grey-500)' : dif<0 ? 'var(--color-danger)' : 'var(--color-success)';
+    return `
+      <div class="edit-row">
+        <div class="hd"><b>${esc(s.nome)}</b><span style="color:${difCor};">${difTxt}</span><button class="rm" onclick="wizardRemoveSerieEditor(${idx})" aria-label="Remover série">${I.close}</button></div>
+        <div class="inp">
+          <label class="box"><input value="${s.quantidade}" inputmode="numeric" aria-label="Parcelas" onchange="wizardSerieEditorInput(${idx},'quantidade',this.value)"><span>x</span></label>
+          <label class="box"><span>R$</span><input value="${s.valor}" inputmode="decimal" aria-label="Valor da parcela" onchange="wizardSerieEditorInput(${idx},'valor',this.value)"></label>
+        </div>
+        <span class="det">${s.quantidade>1 ? s.quantidade+'x de '+brl(s.valor)+' · ' : ''}subtotal ${brl(sub)}</span>
+      </div>`;
+  }).join('');
+  const ultimaIdx = (()=>{ let i = w.seriesEditor.findIndex(s=>/p[óo]s/i.test(s.nome)); return i<0 ? w.seriesEditor.length-1 : i; })();
+  const nomeComp = String((w.seriesEditor[ultimaIdx]||{}).nome||'').replace(/\s*\(.*\)/,'').toLowerCase();
+  const mensais = w.seriesEditor.filter(s=>s.quantidade>1 && /entrada|mensa|obra|parcela/i.test(s.nome));
+  const quick = [0.03,0.05,0.08,0.10,0.12].map(p=>{
+    const on = Math.abs(desc-p) < 0.0005;
+    return `<button class="chip ${on?'active':''} ${p>0.10&&!on?'warnchip':''}" onclick="wizardAtalhoDesconto(${p})">−${Math.round(p*100)}%</button>`;
+  }).join('');
+  const diffCor = needsAprov ? 'var(--color-danger)' : desc>0.00001 ? 'var(--sky-700)' : 'var(--charcoal-700)';
+  const diffBg = needsAprov ? 'var(--color-warning-soft)' : desc>0.00001 ? 'var(--sky-100)' : 'var(--grey-100)';
+  const diffMsg = needsAprov
+    ? 'Desconto de '+fmtPct(desc)+' passa do limite de 10%. A proposta vai para aprovação do Gerente Comercial antes de reservar.'
+    : desc>0.00001 ? 'Desconto de '+fmtPct(desc)+', dentro da sua alçada. A reserva segue direto.'
+    : desc<-0.00001 ? 'Proposta acima da tabela. Sem desconto.' : 'Igual à série padrão. Edite os valores acima para negociar.';
+  const diffVal = Math.abs(desc)<0.00001 ? 'R$ 0' : (desc>0?'− ':'+ ')+brl(Math.abs(d.totalTabela-d.totalProposta))+' ('+fmtPct(Math.abs(desc))+')';
+  const html = `
+    <button class="table-pick sel" onclick="wizardTrocarTabela()">
+      <span class="radio-dot" style="border-color:var(--sky-700);"><i style="width:10px; height:10px; border-radius:50%; background:var(--sky-700);"></i></span>
+      <span style="flex:1; min-width:0;"><b class="title-sm" style="font-size:14.5px;">${esc(tabela.name||'Tabela de Vendas')}</b><span class="sub-sm" style="display:block;">Vigência ${fmtDataBR(tabela.vigenciaDe)} a ${fmtDataBR(tabela.vigenciaAte)}</span></span>
+      <span style="font:600 13px var(--font-sans); color:var(--sky-700);">Trocar</span>
+    </button>
+    <div class="section-title">Série padrão da tabela</div>
+    <div class="group">
+      ${tabela.series.map(s=>{
+        const q = s.quantidade||1; const tot = u.valor*(s.percentual||0)/100;
+        return serieLinhaHtml(s.nome, (q>1 ? q+'x de '+brl(Math.round(tot/q*100)/100)+' · ' : '')+(s.percentual||0)+'% do valor', brl(tot));
+      }).join('')}
+      <div class="serie-total"><span>Total da tabela</span><b>${brl(d.totalTabela)}</b></div>
+    </div>
+    <div class="section-title"><span>Proposta do corretor</span><button class="link-btn" style="padding:4px 0;" onclick="wizardRestaurarPadrao()">Restaurar padrão</button></div>
+    <div class="quick-box">
+      <span class="ttl">Atalhos de negociação</span>
+      <div class="chip-row wrap">${quick}</div>
+      <button class="dashed-btn" onclick="wizardCompensar()">${Math.abs(gap)<1 ? 'Total igual à tabela' : (gap>0?'Compensar ':'Abater ')+brl(Math.abs(gap))+' no '+esc(nomeComp)}</button>
+    </div>
+    <div class="proposta-box">
+      ${linhas}
+      <div class="prop-total"><span>Total da proposta</span><b>${brl(d.totalProposta)}</b></div>
+    </div>
+    <div class="field-row" style="align-items:flex-end;">
+      <div class="field" style="flex:1;"><label for="wz-nova-serie">Nova série</label>
+        <select id="wz-nova-serie">${tabela.series.map(s=>`<option value="${s.catalogoId}">${esc(s.nome)} (${s.percentual}%)</option>`).join('')}</select>
+      </div>
+      <button class="btn btn-secondary" style="width:auto; flex:none;" onclick="wizardAddSerieEditor()">${I.plus} Adicionar</button>
+    </div>
+    ${mensais.length ? `<div class="mensal-grid">${mensais.map(s=>`<div><span>${esc(String(s.nome).replace('Parcelas mensais (obra)','Obra'))} · ${s.quantidade}x</span><b>${brl(s.valor)}/parcela</b></div>`).join('')}</div>` : ''}
+    <div class="diff-box" style="background:${diffBg};">
+      <div class="hd"><span>Diferença para a tabela</span><b style="color:${diffCor};">${diffVal}</b></div>
+      <div class="meter"><i class="fill" style="width:${Math.min(Math.max(desc,0)/0.2,1)*100}%; background:${diffCor};"></i><i class="mark"></i></div>
+      <div class="meter-lab"><span>0%</span><span>limite 10%</span><span>20%</span></div>
+      <p>${diffMsg}</p>
+    </div>
+    ${!sanidadeOk ? `<div class="muted" style="font-size:12px; text-align:center;">A soma da série precisa ser maior que zero, e toda linha com valor precisa ter ao menos 1 parcela.</div>` : ''}`;
+  return {html, next:{label: w.sim ? 'Reservar com essa condição' : 'Continuar', disabled: !sanidadeOk, fn: w.sim ? 'wizardReservarComCondicao()' : 'wizardGoto(4)'}};
+}
+function tabelaPickerBody(tabelas){
+  return `
+    <div class="stack">
+      ${tabelas.map(t=>`
+        <button class="table-pick" onclick="wizardSelecionarTabela('${t.id}')">
+          <span class="radio-dot"></span>
+          <span style="flex:1; min-width:0;"><b class="title-sm" style="font-size:14.5px;">${esc(t.name)}</b><span class="sub-sm" style="display:block;">Vigência ${fmtDataBR(t.vigenciaDe)} a ${fmtDataBR(t.vigenciaAte)} · ${t.series.length} série${t.series.length===1?'':'s'}</span></span>
+        </button>`).join('')}
+    </div>`;
+}
+function manualSerieBody(u, w){
+  const alocado = pagamentoAlocado(w.pagamentos);
+  const saldo = u.valor - alocado;
+  const saldoColor = saldo===0 ? 'var(--color-success)' : saldo>0 ? 'var(--sun-700)' : 'var(--color-danger)';
+  const saldoLabel = saldo===0 ? 'Série completa' : saldo>0 ? 'Falta alocar' : 'Excede o valor em';
+  const html = `
+    <div class="kv-table">
+      <div class="kv-row"><span class="k">Valor do imóvel</span><span class="v">${brl(u.valor)}</span></div>
+      <div class="kv-row"><span class="k">Já alocado</span><span class="v">${brl(alocado)}</span></div>
+      <div class="kv-row"><span class="k">${saldoLabel}</span><span class="v" style="color:${saldoColor};">${brl(Math.abs(saldo))}</span></div>
+    </div>
+    ${w.pagamentos.length ? `
+      <div class="section-title">Itens da série</div>
+      <div class="group">
+        ${w.pagamentos.map((p,idx)=>`
+          <div class="serie-row"><div style="min-width:0;"><b>${esc(p.tipo)}</b><span class="d">${p.parcelas>1?p.parcelas+'x ':''}${esc(p.periodicidade)}${p.quando?' · '+esc(p.quando):''}</span></div>
+          <span style="display:flex; align-items:center; gap:8px;"><span class="val">${brl(p.valor)}</span><button class="list-remove" onclick="wizardRemovePagamento(${idx})" aria-label="Remover item">${I.close}</button></span></div>`).join('')}
+      </div>` : ''}
+    <div class="section-title">Adicionar pagamento</div>
+    <div class="field-row">
+      <div class="field"><label for="wp-tipo">Tipo</label><select id="wp-tipo">${TIPOS_PAGAMENTO.map(o=>`<option>${o}</option>`).join('')}</select></div>
+      <div class="field"><label for="wp-valor">Valor (R$)</label><input id="wp-valor" type="number" placeholder="0"></div>
+    </div>
+    <div class="field-row">
+      <div class="field"><label for="wp-parcelas">Parcelas</label><input id="wp-parcelas" type="number" min="1" value="1" oninput="onWizardParcelasInput()"></div>
+      <div class="field"><label for="wp-periodicidade">Periodicidade</label><select id="wp-periodicidade">${periodicidadeOptions(1).map(o=>`<option>${o}</option>`).join('')}</select></div>
+    </div>
+    <div class="field"><label for="wp-quando">Quando (opcional)</label><input id="wp-quando" placeholder="Ex.: na entrega das chaves"></div>
+    <button class="btn btn-secondary" onclick="wizardAddPagamento()">${I.plus} Adicionar à série</button>
+    ${saldo!==0 && !w.sim ? `<div class="muted" style="font-size:12px; text-align:center;">A série precisa somar exatamente o valor do imóvel para continuar.</div>` : ''}`;
+  return {html, next:{label: w.sim ? 'Reservar com essa condição' : 'Continuar', disabled: w.sim ? false : saldo!==0, fn: w.sim ? 'wizardReservarComCondicao()' : 'wizardGoto(4)'}};
+}
+function wizardPasso3(w, u, e){
+  if(u.real){
+    sfCarregarTabelasVendas(u.empId);
+    const todas = state.sfTabelasVendasCache[u.empId];
+    const tabelas = todas ? todas.filter(t=>!t.tipoVenda || t.tipoVenda===w.tipoVenda) : todas;
+    if(tabelas === null || tabelas === undefined) return {html:`<div class="sync-row" style="margin-top:18px;"><span class="spinner"></span> Carregando tabelas de vendas...</div>`, next:null};
+    if(!tabelas.length) return manualSerieBody(u, w);
+    if(!w.tabelaId) return {html: tabelaPickerBody(tabelas), next:null};
+    return serieEditorBody(u, w);
+  }
+  return manualSerieBody(u, w);
+}
+
+/* ---------- passo 4: revisao ---------- */
+function wizardPasso4(w, u, e){
+  const c = clienteById(w.clienteId);
+  const usaTabela = w.tabelaId && w.seriesEditor && w.seriesEditor.length;
+  const alocado = usaTabela ? wizardSerieAlocado() : pagamentoAlocado(w.pagamentos);
+  let enviados = 0, total = 0;
+  if(c.real){
+    sfCarregarDocumentos(c.id);
+    if(c.documentosReais){
+      const obrig = c.documentosReais.filter(d=>d.obrigatorio);
+      total = obrig.length; enviados = obrig.filter(d=>d.hasFile).length;
+    }
+  } else ({enviados, total} = docsResumo(c));
+  const tabela = usaTabela ? (state.sfTabelasVendasCache[w.empId]||[]).find(t=>t.id===w.tabelaId) : null;
+  let desc = 0, totalTabela = null;
+  if(tabela){
+    const d = calcularDiferencaTabelaProposta(u, tabela, w.seriesEditor);
+    totalTabela = d.totalTabela;
+    desc = d.totalTabela ? (d.totalTabela - d.totalProposta)/d.totalTabela : 0;
+  }
+  const needsAprov = desc > 0.10;
+  const ato = usaTabela ? w.seriesEditor.find(s=>/^ato/i.test(s.nome)) : null;
+  const kv = [['Cliente', c.nome], ['Unidade', e.nome+' · '+unitCode(u)]];
+  if(tabela){
+    kv.push(['Tabela', tabela.name||'Tabela de Vendas'], ['Valor de tabela', brl(totalTabela)], ['Valor proposto', brl(alocado)], ['Desconto', desc>0.00001 ? fmtPct(desc) : 'Sem desconto']);
+    if(ato) kv.push(['Ato', brl(ato.quantidade*ato.valor)]);
+  } else kv.push(['Valor da série', brl(alocado)]);
+  const html = `
+    <div class="kv-table">${kv.map(([k,v])=>`<div class="kv-row"><span class="k">${k}</span><span class="v">${esc(v)}</span></div>`).join('')}</div>
+    ${needsAprov ? `<div class="alert-card warn">${I.alertc}<span style="font-size:12.5px; line-height:1.45; color:var(--charcoal-700);">Desconto de ${fmtPct(desc)} (acima de 10%). A reserva fica aguardando aprovação do Gerente Comercial.</span></div>` : ''}
+    ${enviados<total ? `<div class="alert-card warn">${I.alertc}<span style="font-size:12.5px; line-height:1.45; color:var(--charcoal-700);">${esc(primeiroNome(c.nome))} ainda tem ${total-enviados} de ${total} documentos obrigatórios pendentes. A reserva segue, mas a análise só começa com tudo enviado.</span></div>` : ''}
+    <div class="field"><label for="wz-motivo">Motivo da escolha da unidade</label>
+      <select id="wz-motivo" onchange="wizardSetMotivo(this.value)">
+        <option value="" ${!w.motivo?'selected':''} disabled>Selecione o motivo</option>
+        ${MOTIVOS_RESERVA.map(m=>`<option value="${m}" ${w.motivo===m?'selected':''}>${m}</option>`).join('')}
+      </select>
+    </div>
+    <div class="field"><label for="wz-obs">Observações</label><textarea id="wz-obs" oninput="wizardSetObs(this.value)" placeholder="Ex.: conta aguarda aprovação de crédito">${esc(w.obs)}</textarea></div>
+    <label style="display:flex; gap:10px; align-items:flex-start; font-size:12.5px; color:var(--grey-600); cursor:pointer;">
+      <input type="checkbox" ${w.aceite?'checked':''} onchange="wizardToggleAceite()" style="margin-top:2px;">
+      A conta está ciente das condições apresentadas e autoriza a criação da reserva.
+    </label>`;
+  return {html, next:{
+    label: w.confirmando ? 'Criando no Salesforce...' : needsAprov ? 'Enviar para aprovação' : 'Confirmar reserva',
+    disabled: (!w.aceite || !w.motivo || w.confirmando), fn:'confirmarReserva()',
+    hint: !w.motivo ? 'Escolha o motivo da escolha da unidade para confirmar.' : ''}};
+}
+
+/* ---------- render do wizard ---------- */
+function wizardTop(w, u, e, label, comSegs){
+  const nav = wizardPassosVisiveis(w);
+  const sair = (w.step===1 && !w.novoClienteMode) || w.step===5;
+  return `
+    <div class="top" style="gap:14px;">
+      <div class="top-row"><button class="circ-btn" onclick="wizardBack()" aria-label="${sair?'Fechar':'Voltar'}">${sair?I.close:I.back}</button><span class="top-eyebrow">${label}</span></div>
+      ${comSegs ? `<div class="w-segs" style="--n:${nav.n};">${Array.from({length:nav.n}).map((_,i)=>`<i class="${i<nav.cur?'on':''}"></i>`).join('')}</div>` : ''}
+      <div class="w-unit">
+        <div style="min-width:0;"><b class="t">${esc(e.nome)} · ${esc(unitCode(u))}</b><span class="s">${u.dorm} dorm${u.suite?` · ${u.suite} suíte${u.suite>1?'s':''}`:''} · ${u.metragem} m²</span></div>
+        <b class="v">${mi(u.valor)}</b>
+      </div>
+    </div>`;
+}
 function renderWizard(){
   const w = state.wizard;
   const u = unitById(w.unitId), e = empById(w.empId);
-  const titles = ['Selecionar conta','Tipo de venda','Serie de pagamentos','Revisao da reserva','Reserva confirmada'];
-  const progress = `<div class="wizard-progress">${[1,2,3,4,5].map(n=>`<i class="${w.step>=n?'on':''}"></i>`).join('')}</div>`;
-
-  let body='';
-  if(w.step===1){
-    if(w.novoClienteMode){
-      body = `
-        <div class="field"><label for="wc-nome">Nome completo</label><input id="wc-nome"></div>
-        <div class="field-row">
-          <div class="field"><label for="wc-cpf">CPF</label><input id="wc-cpf" placeholder="000.000.000-00"></div>
-          <div class="field"><label for="wc-tel">Telefone</label><input id="wc-tel"></div>
-        </div>
-        <div class="field"><label for="wc-email">E-mail</label><input id="wc-email" type="email"></div>
-        <button class="btn btn-primary" ${w.criandoConta?'disabled':''} onclick="wizardSaveNovoCliente()">${w.criandoConta?'Cadastrando...':`${I.check} Salvar e continuar`}</button>
-      `;
-    } else {
-      const clienteSel = w.clienteId ? clienteById(w.clienteId) : null;
-      const buscaResultados = (w.buscaResultados||[]).filter(bc=>!DB.clientes.some(c=>c.id===bc.id));
-      body = `
-        <p class="muted" style="font-size:13px; margin-top:0;">Unidade ${unitCode(u)} - ${e.nome}</p>
-        ${u.real ? `
-          <div class="search-wrap" style="margin-bottom:10px;">${I.search}<input id="wz-busca-conta" placeholder="Buscar conta por nome ou CPF" onkeydown="if(event.key==='Enter'){event.preventDefault(); wizardBuscarConta();}">
-          </div>
-          <button class="btn btn-ghost" style="margin-bottom:10px;" onclick="wizardBuscarConta()">${I.search} Buscar no Salesforce</button>
-        ` : ''}
-        <div class="stack">
-          ${buscaResultados.map(c=>`
-            <div class="radio-card" onclick="wizardSelectContaBusca('${c.id}')">
-              <div class="radio-dot"></div>
-              <div style="flex:1; min-width:0;">
-                <div style="font-weight:600; font-size:13.5px;">${c.nome}</div>
-                <div class="muted mono" style="font-size:11.5px;">${c.cpf||'-'}</div>
-              </div>
-            </div>`).join('')}
-          ${DB.clientes.map(c=>`
-            <div class="radio-card ${w.clienteId===c.id?'sel':''}" onclick="wizardSelectCliente('${c.id}')">
-              <div class="radio-dot"></div>
-              <div style="flex:1; min-width:0;">
-                <div style="font-weight:600; font-size:13.5px;">${c.nome}</div>
-                <div class="muted mono" style="font-size:11.5px;">${c.cpf}</div>
-              </div>
-              ${docsBadgeMini(c)}
-            </div>`).join('')}
-        </div>
-        <button class="btn btn-ghost" style="margin-top:8px;" onclick="wizardShowNovoCliente()">${I.plus} Cadastrar nova conta</button>
-
-        ${clienteSel? `
-          <div style="margin-top:8px;">
-            ${documentosChecklist(clienteSel)}
-            <p class="muted" style="font-size:11.5px; margin-top:-2px;">Documentacao pendente nao impede a reserva - o cliente pode enviar depois.</p>
-          </div>
-        ` : ''}
-
-        ${clienteSel && clienteSel.negociacaoAbertaId && w.negociacaoEscolha!=='nova' ? (w.negociacaoEscolha==='existente' ? `
-          <div class="alert-card warn" style="margin-top:14px;">
-            ${I.check}
-            <div>
-              <b>Vai entrar na reserva em andamento</b>
-              <div class="muted" style="font-size:12px; margin-top:2px;">${clienteSel.negociacaoAbertaUnidade||'unidade nao identificada'} - ${clienteSel.negociacaoAbertaStage||''}</div>
-              <button class="btn-ghost" style="margin-top:6px; padding:4px 0; font-size:12px;" onclick="wizardCriarReservaSeparada()">Desfazer, criar reserva separada</button>
-            </div>
-          </div>
-        ` : `
-          <div class="alert-card warn" style="margin-top:14px;">
-            ${I.alert}
-            <div style="flex:1;">
-              <b>${clienteSel.nome} ja tem uma reserva em andamento</b>
-              <div class="muted" style="font-size:12px; margin-top:2px;">${clienteSel.negociacaoAbertaUnidade||'unidade nao identificada'} - ${clienteSel.negociacaoAbertaStage||''}</div>
-              ${clienteSel.negociacaoAbertaTemAtiva ? `
-                <div class="muted" style="font-size:12px; margin-top:6px;">Essa unidade ainda esta Ativa - o Salesforce so permite uma reserva ativa por negociacao. Cancele-a (na tela de Reservas) antes de poder somar outra unidade aqui.</div>
-                <div style="margin-top:8px;">
-                  <button class="btn-ghost" style="padding:7px 12px; font-size:12.5px;" onclick="wizardCriarReservaSeparada()">Criar reserva separada mesmo assim</button>
-                </div>
-              ` : `
-                <div style="display:flex; gap:8px; margin-top:8px; flex-wrap:wrap;">
-                  <button class="btn btn-primary" style="padding:7px 12px; font-size:12.5px;" onclick="wizardUsarReservaExistente()">Adicionar a essa reserva</button>
-                  <button class="btn-ghost" style="padding:7px 12px; font-size:12.5px;" onclick="wizardCriarReservaSeparada()">Criar reserva separada</button>
-                </div>
-              `}
-            </div>
-          </div>
-        `) : ''}
-
-        <div style="margin-top:18px;">
-          <button class="btn btn-primary" ${!w.clienteId?'disabled':''} onclick="wizardGoto(2)">Continuar</button>
-        </div>
-      `;
-    }
-  } else if(w.step===2){
-    /* Tipo de Venda - so' pergunta quando existe mais de 1 Tipo habilitado pro Empreendimento
-       real desta unidade; startWizard ja resolveu w.tipoVenda direto quando so' havia 0 ou 1
-       opcao (mock, ou Empreendimento sem habilitacao configurada ainda). */
-    body = wizardTipoVendaBody(w.tiposVendaHabilitados.length ? w.tiposVendaHabilitados : ['Financiamento Direto']);
-  } else if(w.step===3){
-    /* empreendimento real com Tabela de Vendas aprovada -> fluxo real (tabela+serie de verdade,
-       gera CA_FluxoPagamento__c/SerieFluxoPagamento__c). Sem nenhuma Tabela aprovada (ou unidade
-       mock) -> fluxo manual de sempre, sem mudanca. */
-    if(u.real){
-      sfCarregarTabelasVendas(u.empId);
-      const todasTabelas = state.sfTabelasVendasCache[u.empId];
-      /* filtra pelo Tipo de Venda escolhido no passo anterior - uma tabela sem CA_TipoVenda__c
-         marcado (legado, ainda nao classificada) continua aparecendo em qualquer Tipo, pra nao
-         criar um beco sem saida por falta de dado cadastrado. */
-      const tabelas = todasTabelas ? todasTabelas.filter(t=>!t.tipoVenda || t.tipoVenda===w.tipoVenda) : todasTabelas;
-      if(tabelas === null || tabelas === undefined){
-        body = `<div class="sync-row" style="margin-top:18px;"><span class="spinner"></span> Carregando tabelas de vendas...</div>`;
-      } else if(!tabelas.length){
-        body = manualSerieBody(u, w);
-      } else if(!w.tabelaId){
-        body = tabelaPickerBody(tabelas);
-      } else {
-        body = serieEditorBody(u, w);
-      }
-    } else {
-      body = manualSerieBody(u, w);
-    }
-  } else if(w.step===4){
-    const c = clienteById(w.clienteId);
-    const usaTabela = w.tabelaId && w.seriesEditor && w.seriesEditor.length;
-    const alocado = usaTabela ? wizardSerieAlocado() : pagamentoAlocado(w.pagamentos);
-    /* aviso de documentacao pendente: conta real usa o checklist REAL (/documentos?contaId=,
-       o mesmo do passo 1 e da tela da Conta) - antes usava docsResumo (mock), que aparecia
-       sempre pra conta real mesmo com os documentos ja enviados de verdade. Enquanto o checklist
-       real nao carregou, nao mostra aviso nenhum (melhor nada do que informacao errada). */
-    let enviados = 0, total = 0;
-    if(c.real){
-      sfCarregarDocumentos(c.id);
-      if(c.documentosReais){
-        const obrig = c.documentosReais.filter(d=>d.obrigatorio);
-        total = obrig.length;
-        enviados = obrig.filter(d=>d.hasFile).length;
-      }
-    } else {
-      ({enviados, total} = docsResumo(c));
-    }
-    /* Diferenca Tabela x Proposta (Parte 3.3) - mesma formula/markup do passo 3 (Tabela & Serie),
-       reaproveitando calcularDiferencaTabelaProposta/diferencaTabelaPropostaBody pra nao duplicar.
-       Aqui e' so' a confirmacao final antes de criar a Reserva - o corretor ja viu esse mesmo
-       numero ao vivo enquanto montava a proposta. O numero oficial (calculado so' no Apex) e'
-       mostrado de novo na tela de confirmacao, a partir da resposta do POST /reservas. */
-    let diffBody = '';
-    if(usaTabela){
-      const tabelaEscolhida = (state.sfTabelasVendasCache[w.empId]||[]).find(t=>t.id===w.tabelaId);
-      if(tabelaEscolhida){
-        diffBody = `
-          <div class="section-title">Tabela x Proposta</div>
-          ${diferencaTabelaPropostaBody(u, tabelaEscolhida, w.seriesEditor)}
-        `;
-      }
-    }
-    body = `
-      <div class="section-title" style="margin-top:0;">Conta</div>
-      <div class="kv-table"><div class="kv-row"><span class="k">${c.nome}</span><span class="v mono">${c.cpf}</span></div></div>
-
-      ${enviados<total? `
-        <div class="alert-card warn" style="margin-top:14px;">
-          ${I.alert}
-          <div>
-            <b>Documentacao pendente</b>
-            <div class="muted" style="font-size:12px; margin-top:2px;">${enviados} de ${total} documentos enviados - a conta pode enviar o restante depois, isso nao impede a reserva.</div>
-          </div>
-        </div>
-      ` : ''}
-
-      <div class="section-title">Unidade</div>
-      <div class="kv-table">
-        <div class="kv-row"><span class="k">Empreendimento</span><span class="v" style="font-family:inherit; font-weight:500;">${e.nome}</span></div>
-        <div class="kv-row"><span class="k">Unidade</span><span class="v">${unitCode(u)} - ${u.dorm} dorm - ${u.metragem} m2</span></div>
-      </div>
-
-      <div class="section-title">Serie de pagamentos</div>
-      <div class="stack">
-        ${usaTabela ? w.seriesEditor.map(s=>`
-          <div class="list-card" style="cursor:default;">
-            <div style="flex:1;">
-              <div style="font-weight:600; font-size:13.5px;">${s.nome}</div>
-              <div class="muted" style="font-size:11.5px;">${s.quantidade>1?s.quantidade+'x ':''}${brl(s.valor)}</div>
-            </div>
-            <div class="mono" style="font-weight:600; font-size:13.5px;">${brl(s.quantidade*s.valor)}</div>
-          </div>
-        `).join('') : w.pagamentos.map(p=>`
-          <div class="list-card" style="cursor:default;">
-            <div style="flex:1;">
-              <div style="font-weight:600; font-size:13.5px;">${p.tipo}</div>
-              <div class="muted" style="font-size:11.5px;">${p.parcelas>1?p.parcelas+'x ':''}${p.periodicidade}${p.quando?' - '+p.quando:''}</div>
-            </div>
-            <div class="mono" style="font-weight:600; font-size:13.5px;">${brl(p.valor)}</div>
-          </div>
-        `).join('')}
-      </div>
-      <div class="kv-table" style="margin-top:10px;">
-        <div class="kv-row"><span class="k">Total da serie</span><span class="v">${brl(alocado)}</span></div>
-      </div>
-
-      ${diffBody}
-
-      <div class="field" style="margin-top:16px;"><label for="wz-motivo">Motivo da escolha da unidade</label>
-        <select id="wz-motivo" onchange="wizardSetMotivo(this.value)">
-          <option value="" ${!w.motivo?'selected':''} disabled>Selecione o motivo</option>
-          ${MOTIVOS_RESERVA.map(m=>`<option value="${m}" ${w.motivo===m?'selected':''}>${m}</option>`).join('')}
-        </select>
-      </div>
-      <div class="field"><label for="wz-obs">Observacoes</label><textarea id="wz-obs" oninput="wizardSetObs(this.value)" placeholder="Ex: conta aguarda aprovacao de credito">${w.obs}</textarea></div>
-
-      <label style="display:flex; gap:10px; align-items:flex-start; font-size:12.5px; color:var(--text-muted); margin:6px 0 18px; cursor:pointer;">
-        <input type="checkbox" ${w.aceite?'checked':''} onchange="wizardToggleAceite()" style="margin-top:2px;">
-        A conta esta ciente das condicoes apresentadas e autoriza a criacao da reserva.
-      </label>
-
-      <button class="btn btn-primary" ${(!w.aceite||!w.motivo||w.confirmando)?'disabled':''} onclick="confirmarReserva()">${w.confirmando?'<span class=\"spinner\"></span> Criando no Salesforce...':'Confirmar reserva'}</button>
-      ${!w.motivo ? `<p class="muted" style="font-size:11.5px; text-align:center; margin-top:8px;">Escolha o motivo da escolha da unidade para confirmar.</p>` : ''}
-    `;
-  } else if(w.erro){
-    body = `
-      <div class="alert-card" style="margin-top:8px;">${I.alert}<div><b>Nao foi possivel criar a reserva</b><div class="muted" style="font-size:12.5px; margin-top:2px;">${w.erro}</div></div></div>
-      <button class="btn btn-secondary" onclick="wizardTentarDeNovo()">Voltar e tentar de novo</button>
-    `;
-  } else {
-    /* Diferenca Tabela x Proposta OFICIAL (Parte 3.3) - vem da resposta do POST /reservas
-       (tabelaNominal/propostaNominal/diferencaNominal/diferencaNominalPerc), calculada so' no
-       Apex (ReservasService.criarFluxoPagamentoDaTabela) - espelha exatamente o que foi gravado no
-       Fluxo de Pagamento, sem reinventar a formula aqui. So' aparece quando a Reserva usou uma
-       Tabela de Vendas real. */
-    const temDiferencaOficial = w.tabelaNominal!==undefined && w.tabelaNominal!==null;
-    const diffOficialColor = (w.diferencaNominal||0)>0 ? 'var(--status-reserved)' : (w.diferencaNominal||0)<0 ? 'var(--status-sold)' : 'var(--status-available)';
-    body = `
-      <div class="success-badge">${I.check}</div>
-      <h2 style="text-align:center; margin:0 0 4px; font-size:18px;">Reserva confirmada</h2>
-      <p class="muted" style="text-align:center; font-size:13px;">Protocolo <span class="mono" style="color:var(--text); font-weight:600;">${w.protocolo}</span></p>
-      ${w.syncing
-        ? `<div class="sync-row"><span class="spinner"></span> Sincronizando com Salesforce...</div>`
-        : `<div class="sync-row" style="color:var(--status-available);">${I.check} Sincronizado com o Salesforce</div>`}
-      ${temDiferencaOficial ? `
-        <div class="section-title">Tabela x Proposta (oficial)</div>
-        <div class="kv-table" style="margin-bottom:6px;">
-          <div class="kv-row"><span class="k">Total da Tabela</span><span class="v">${brl(w.tabelaNominal)}</span></div>
-          <div class="kv-row"><span class="k">Total da Proposta</span><span class="v">${brl(w.propostaNominal)}</span></div>
-          <div class="kv-row"><span class="k">Diferença</span><span class="v" style="color:${diffOficialColor};">${brl(w.diferencaNominal)} (${(w.diferencaNominalPerc||0).toFixed(1)}%)</span></div>
-        </div>
-      ` : ''}
-      <div class="btn-row" style="margin-top:26px;">
-        <button class="btn btn-secondary" onclick="finishWizard(true)">Ver reserva</button>
-        <button class="btn btn-primary" onclick="finishWizard(false)">Concluir</button>
-      </div>
-    `;
+  if(w.step===5 && !w.erro) return wizardSucesso(w, u, e);
+  if(w.step===5 && w.erro){
+    return {title:'Reserva não criada', back:true, hideTab:true,
+      top: wizardTop(w,u,e,'Não foi possível reservar', false),
+      body:`<div class="alert-card">${I.alertc}<div><b>Não foi possível criar a reserva</b><div class="muted" style="font-size:12.5px; margin-top:2px;">${esc(w.erro)}</div></div></div>
+        <button class="btn btn-secondary btn-lg" onclick="wizardTentarDeNovo()">Voltar e tentar de novo</button>`};
   }
-
-  return {title: (w.step===5 && w.erro) ? 'Reserva nao criada' : titles[w.step-1], back:true, body: progress + body};
+  let passo, titulo, dica;
+  if(w.step===1){ passo = wizardPasso1(w,u,e); titulo = w.novoClienteMode ? 'Nova conta' : 'Para quem é a reserva?'; dica = w.novoClienteMode ? 'Cadastre o comprador no Salesforce.' : 'Escolha a conta do comprador.'; }
+  else if(w.step===2){ passo = {html: wizardTipoVendaBody(w.tiposVendaHabilitados.length ? w.tiposVendaHabilitados : ['Financiamento Direto']), next:null}; titulo = 'Como o cliente vai pagar?'; dica = 'Escolha o tipo de venda.'; }
+  else if(w.step===3){ passo = wizardPasso3(w,u,e); titulo = w.sim ? 'Simule as parcelas' : 'Condição de pagamento'; dica = w.sim ? 'Sem compromisso: nada é reservado. Ajuste com o cliente e reserve quando ele decidir.' : 'Parta da série padrão e ajuste a proposta. Descontos acima de 10% vão para aprovação.'; }
+  else { passo = wizardPasso4(w,u,e); titulo = 'Revise e confirme'; dica = 'A reserva trava a unidade e vai para o Salesforce.'; }
+  const label = w.sim ? 'Simulação · sem reserva' : 'Passo '+wizardPassosVisiveis(w).cur+' de '+wizardPassosVisiveis(w).n;
+  const nx = passo.next;
+  const nav = nx ? `
+    <div class="btn-row" style="margin-top:8px;">
+      ${(w.step>1 && !(w.sim && w.step<=3) && !w.novoClienteMode) ? `<button class="btn btn-secondary btn-lg" style="flex:none; width:auto; padding:0 22px;" onclick="wizardBack()">Voltar</button>` : ''}
+      <button class="btn btn-primary btn-lg" ${nx.disabled?'disabled':''} onclick="${nx.fn}">${nx.label}</button>
+    </div>${nx.hint ? `<div class="muted" style="font-size:11.5px; text-align:center;">${nx.hint}</div>` : ''}` : '';
+  return {title:'', back:true, hideTab:true,
+    top: wizardTop(w,u,e,label, !w.sim),
+    body: `<div class="w-head"><b>${titulo}</b><span>${dica}</span></div>${passo.html}${nav}`};
+}
+function wizardSucesso(w, u, e){
+  const c = clienteById(w.clienteId) || {nome:''};
+  const aprov = (w.diferencaNominalPerc||0) < -10;
+  return {hideTab:true, full:`
+    <div class="ok-screen">
+      <div class="arti"><i></i><img src="assets/arti-celebrando.png" alt="Arti comemorando"></div>
+      <h2>Reserva enviada!</h2>
+      <span class="prot">${esc(/^[a-zA-Z0-9]{15,18}$/.test(w.protocolo||'') ? '' : (w.protocolo||''))}</span>
+      <p>A unidade ${esc(unitCode(u))} do ${esc(e.nome)} ficou reservada para ${esc(c.nome)}.</p>
+      ${aprov ? `<div class="warnline">Desconto de ${Math.abs(w.diferencaNominalPerc).toLocaleString('pt-BR',{maximumFractionDigits:1})}% enviado para aprovação do Gerente Comercial. Você recebe o retorno aqui.</div>` : ''}
+      <div class="sync">${w.syncing ? '<span class="spinner" style="border-color:rgba(255,255,255,.2); border-top-color:var(--sky-500);"></span> Sincronizando com Salesforce...' : I.checkc+' Sincronizado com o Salesforce'}</div>
+      <div class="btns">
+        <button class="btn btn-lg btn-accent" onclick="finishWizard(true)">Ver reserva</button>
+        <button class="txt" onclick="finishWizard(false)">Voltar ao início</button>
+      </div>
+    </div>`};
 }
 function finishWizard(viewDetail){
   const w = state.wizard;
   const createdId = w.createdId;
   state.mode = 'tabs'; state.wizard = null;
   if(viewDetail && createdId){
-    state.tab = 'reservas';
-    state.stacks.reservas = [{screen:'resList'},{screen:'resDetail', params:{id:createdId}}];
+    switchTab('reservas');
+    go('resDetail', {id:createdId});
   } else {
-    state.tab = 'home';
+    switchTab('home');
   }
-  render();
 }
+
+
+/* =====================================================================================
+   REDESIGN 1b - documentos da conta (espelha o componente IDP do Salesforce)
+   Lista: Documentacao pessoal*, Comprovante de renda, Comprovante de residencia*, Extrato bancario*
+   (o * marca os obrigatorios; a contagem considera so' eles) + "Outros".
+   Envio: painel com Tirar foto / Escolher arquivo -> POST /documentos (base64), igual a antes.
+   ===================================================================================== */
+function docsHeader(ok, tot){
+  return `
+    <div style="display:flex; flex-direction:column; gap:8px; padding:0 4px;">
+      <div style="display:flex; justify-content:space-between; gap:8px; font-size:13px;"><b style="color:var(--charcoal-700);">${ok} de ${tot} obrigatórios enviados</b><span style="color:var(--grey-500); text-align:right;">Reaproveitados nas próximas compras</span></div>
+      <div class="progressbar green"><i style="width:${tot ? ok/tot*100 : 100}%"></i></div>
+    </div>`;
+}
+/* conta de exemplo (mock): mesmo toggle de antes, so' com o visual novo */
+function documentosChecklist(cliente){
+  if(cliente.real) return documentosChecklistReal(cliente);
+  const {docs, enviados, total} = docsResumo(cliente);
+  return `
+    ${docsHeader(enviados, total)}
+    <div class="doc-list">
+      ${docs.map(d=>{
+        const ok = d.status==='enviado';
+        return `
+        <div class="doc-item">
+          <div class="doc-top">
+            <span class="doc-ic ${ok?'ok':''}">${ok ? I.check : I.plus}</span>
+            <span style="flex:1; min-width:0; display:flex; flex-direction:column; gap:2px;"><b class="doc-name">${esc(d.tipo)}</b><span class="doc-file">${ok?'Documento enviado':'Aguardando envio'}</span></span>
+            ${ok ? `<span class="doc-pill ok">Confirmado</span>` : ''}
+            <button class="${ok?'round-btn':'doc-send'}" onclick="toggleDocumento('${cliente.id}','${d.tipo}')" aria-label="${ok?'Remover':'Anexar'}">${ok ? I.trash : I.upload+'Enviar'}</button>
+          </div>
+        </div>`; }).join('')}
+    </div>`;
+}
+function docTipoIcon(tipoDocumento){
+  if(tipoDocumento==='DocumentacaoPessoal') return I.idcard;
+  if(tipoDocumento==='ComprovanteResidencia') return I.pin;
+  if(tipoDocumento==='ComprovanteRenda' || tipoDocumento==='ExtratoBancario') return I.wallet;
+  return I.emptyDoc;
+}
+function docTipoHint(tipoDocumento){
+  if(tipoDocumento==='DocumentacaoPessoal') return 'RG, CPF ou CNH — qualquer um dos três serve';
+  return '';
+}
+function documentosChecklistReal(cliente){
+  sfCarregarDocumentos(cliente.id);
+  const docs = cliente.documentosReais || [];
+  const obrig = docs.filter(d=>d.obrigatorio);
+  const enviados = obrig.filter(d=>d.hasFile).length;
+  return `
+    ${docs.length ? docsHeader(enviados, obrig.length) : ''}
+    <div class="doc-list">
+      ${!docs.length ? `<div class="sync-row" style="padding:18px;"><span class="spinner"></span> Carregando checklist...</div>` : docs.map(d=>documentoRowReal(cliente.id, d)).join('')}
+    </div>`;
+}
+/* rotulo do selo - prioriza o resultado da titularidade (o que importa pro corretor: "essa pessoa
+   e' mesmo a da conta?"); nomes do redesign: Confirmado / Revisao necessaria / Divergente */
+function docPillInfo(d){
+  if(!d.hasFile) return {cls:'neutral', txt:'Aguardando envio'};
+  const t = d.titularidade;
+  if(t && t.status==='confirmado') return {cls:'ok', txt:'Confirmado'};
+  if(t && t.status==='divergente') return {cls:'err', txt:'Divergente'};
+  if(t && t.status==='verificar') return {cls:'warn', txt:'Revisão necessária'};
+  if(d.statusLabel==='Vermelho') return {cls:'warn', txt:'Revisão necessária'};
+  if(d.statusLabel==='Verde') return {cls:'ok', txt:'Confirmado'};
+  return {cls:'neutral', txt:'Enviado'};
+}
+function documentoRowReal(clienteId, d){
+  const key = `${clienteId}_${d.tipoDocumento}`;
+  const uploading = state.sfDocUploading[key], processando = state.sfDocProcessando[key];
+  const aplicando = state.sfDocAplicando[key], excluindo = state.sfDocExcluindo[key];
+  const busy = !!(uploading || processando || excluindo);
+  let pill = docPillInfo(d), icCls = '', icon = docTipoIcon(d.tipoDocumento);
+  if(uploading){ pill = {cls:'busy', txt:'Enviando…'}; }
+  else if(processando){ pill = {cls:'busy', txt:'Lendo dados…'}; }
+  if(busy){ icCls = 'busy'; icon = '<span class="spinner" style="width:16px; height:16px;"></span>'; }
+  else if(pill.cls==='ok'){ icCls = 'ok'; icon = I.check; }
+  else if(pill.cls==='warn' || pill.cls==='err'){ icCls = pill.cls; icon = I.alert; }
+  else if(!d.hasFile){ icon = I.plus; }
+  const hint = docTipoHint(d.tipoDocumento);
+  const sub = d.hasFile ? esc(d.fileName||'Documento enviado') : (d.obrigatorio ? 'Obrigatório · aguardando envio' : 'Opcional · aguardando envio');
+  const op = busy ? 'disabled' : '';
+  return `
+    <div class="doc-item">
+      <div class="doc-top">
+        <span class="doc-ic ${icCls}">${icon}</span>
+        <span style="flex:1; min-width:0; display:flex; flex-direction:column; gap:2px;">
+          <b class="doc-name">${esc(d.label)}${d.obrigatorio?'<span class="doc-req"> *</span>':''}</b>
+          <span class="doc-file">${hint && !d.hasFile ? hint : sub}</span>
+        </span>
+        ${!d.hasFile ? `<button class="doc-send" ${op} onclick="iniciarUploadDocumento('${clienteId}','${d.tipoDocumento}')">${I.upload}Enviar</button>` : ''}
+      </div>
+      <div class="doc-bottom">
+        <span class="doc-pill ${pill.cls}">${pill.txt}</span>
+        ${d.hasFile ? `
+          <div class="doc-btns">
+            <button class="round-btn" ${op} title="Ver arquivo" aria-label="Ver arquivo" onclick="verArquivoDocumento('${d.contentDocumentId}')">${I.eye}</button>
+            <button class="round-btn ${d.expandido?'on':''}" ${op} title="Dados lidos" aria-label="Dados lidos do documento" onclick="toggleDocumentoExpandido('${clienteId}','${d.tipoDocumento}')">${I.term}</button>
+            <button class="round-btn" ${op} title="Trocar arquivo" aria-label="Trocar arquivo" onclick="iniciarUploadDocumento('${clienteId}','${d.tipoDocumento}')">${I.upload}</button>
+            <button class="round-btn" ${op} title="Excluir" aria-label="Excluir" onclick="excluirDocumentoReal('${clienteId}','${d.tipoDocumento}','${d.contentDocumentId}')">${I.trash}</button>
+          </div>` : ''}
+      </div>
+      ${d.hasFile && d.expandido ? `
+        <div class="doc-more">
+          ${!d.campos ? `<div class="muted" style="font-size:11.5px;">Lendo dados do documento...</div>`
+            : d.campos.length ? `
+              ${titularidadeBox(d.titularidade)}
+              <div class="field-grid">${d.campos.map(c=>`<div class="field-card"><span class="fl">${esc((c.label||c.key).replace(/_/g,' '))}</span><span class="fv">${esc(c.value||'-')}</span></div>`).join('')}</div>
+              <button class="btn btn-secondary" ${aplicando?'disabled':''} onclick="aplicarDocumento('${clienteId}','${d.tipoDocumento}')">${aplicando ? '<span class="spinner"></span> Aplicando...' : 'Aplicar dados à conta'}</button>
+            ` : `<div class="muted" style="font-size:11.5px;">Nenhum campo extraído deste documento.</div>`}
+        </div>` : ''}
+    </div>`;
+}
+function titularidadeBox(t){
+  if(!t || !t.rotulo) return '';
+  const cls = t.status==='confirmado' ? '' : t.status==='divergente' ? 'err' : t.status==='verificar' ? 'warn' : '';
+  const icon = t.status==='confirmado' ? I.check : I.alert;
+  return `
+    <div class="titular-box ${cls}">
+      <div class="titular-head ${cls}">${icon}<span>${esc(t.rotulo)}</span></div>
+      ${t.nomeDocumento ? `<div class="titular-line">Nome: <b>${esc(t.nomeConta||'-')}</b> (conta) vs <b>${esc(t.nomeDocumento)}</b> (documento)</div>` : ''}
+      ${t.cpfDocumento || t.cpfConta ? `<div class="titular-line">CPF: <b>${esc(t.cpfConta||'-')}</b> (conta) vs <b>${esc(t.cpfDocumento||'-')}</b> (documento) ${t.cpfRotulo?'· '+esc(t.cpfRotulo):''}</div>` : ''}
+    </div>`;
+}
+function docsBadgeMini(cliente){
+  if(cliente.real){
+    if(!cliente.documentosReais) return '';
+    const obrig = cliente.documentosReais.filter(d=>d.obrigatorio);
+    const enviados = obrig.filter(d=>d.hasFile).length;
+    return badge(enviados===obrig.length ? 'success' : 'warning', `Docs ${enviados}/${obrig.length}`);
+  }
+  const {enviados, total} = docsResumo(cliente);
+  return badge(enviados===total ? 'success' : 'warning', `Docs ${enviados}/${total}`);
+}
+
+/* ---------- envio: painel "Tirar foto | Escolher arquivo" ---------- */
+function iniciarUploadDocumento(clienteId, tipoDocumento){
+  const c = clienteById(clienteId);
+  const d = c && c.documentosReais && c.documentosReais.find(x=>x.tipoDocumento===tipoDocumento);
+  state.docUploadTarget = {clienteId, tipoDocumento};
+  state.docPick = {clienteId, tipoDocumento, label: d ? d.label : 'Documento'};
+  renderOverlays(true);
+}
+function docPickHtml(){
+  const p = state.docPick;
+  return `<div class="overlay" style="z-index:46;">
+    <div class="scrim" onclick="fecharPaineis()"></div>
+    <div class="panel">
+      <div class="grab"></div>
+      <div><div class="ph-eyebrow">Enviar documento</div><div class="ph-title">${esc(p.label)}</div><div class="ph-sub">Foto ou PDF de até 10 MB. O documento é lido automaticamente e conferido com os dados da conta.</div></div>
+      <div class="pick-grid">
+        <button class="pick-card" onclick="$('doc-cam-input').click()"><span class="pi dark">${I.camera}</span><b>Tirar foto</b><span class="s">Câmera do celular</span></button>
+        <button class="pick-card" onclick="$('doc-file-input').click()"><span class="pi light">${I.folder}</span><b>Escolher arquivo</b><span class="s">Galeria ou PDF</span></button>
+      </div>
+      <button class="cancel" onclick="fecharPaineis()">Cancelar</button>
+    </div>
+  </div>`;
+}
+function handleDocUploadChange(ev){
+  const file = ev.target.files && ev.target.files[0];
+  const target = state.docUploadTarget;
+  ev.target.value = '';
+  if(!file || !target) return;
+  if(file.size > 10*1024*1024){ toast('O arquivo passa de 10 MB. Escolha outro menor.'); return; }
+  state.docPick = null; renderOverlays(true);
+  let {clienteId, tipoDocumento} = target;
+  const key = `${clienteId}_${tipoDocumento}`;
+  const reader = new FileReader();
+  reader.onload = () => {
+    state.sfDocUploading[key] = true;
+    render();
+    sfApi('/documentos', {method:'POST', body: JSON.stringify({
+      contaId: clienteId, tipoDocumento, fileName: file.name, base64Data: reader.result,
+    })}).then(res=>{
+      state.sfDocUploading[key] = false;
+      const c = clienteById(clienteId);
+      const d = c && c.documentosReais && c.documentosReais.find(x=>x.tipoDocumento===tipoDocumento);
+      if(d){
+        Object.assign(d, {hasFile:true, status:'uploaded', statusLabel:res.status, confianca:res.confidence,
+          contentDocumentId:res.contentDocumentId, fileName:file.name, campos:res.campos||[], titularidade:res.titularidade||null,
+          expandido:true});
+      } else {
+        /* "Outros": o checklist nao tem esse tipo - recarrega pra aparecer */
+        state.sfDocumentosCarregados[clienteId] = false;
+        sfCarregarDocumentos(clienteId);
+      }
+      render();
+      toast(res.status==='Verde' ? 'Documento enviado e conferido' : 'Documento enviado · revisão necessária');
+    }).catch(e=>{
+      state.sfDocUploading[key] = false;
+      render();
+      toast('Nao foi possivel enviar o documento: '+e.message);
+    });
+  };
+  reader.readAsDataURL(file);
+}
+/* excluir com Desfazer (5s): a linha some na hora e o DELETE so' vai pro Salesforce quando o
+   prazo do Desfazer acaba - assim desfazer nao precisa reenviar o arquivo. */
+function excluirDocumentoReal(clienteId, tipoDocumento, contentDocumentId){
+  const c = clienteById(clienteId);
+  const d = c && c.documentosReais && c.documentosReais.find(x=>x.tipoDocumento===tipoDocumento);
+  if(!d) return;
+  const snapshot = {...d};
+  Object.assign(d, {hasFile:false, status:'empty', statusLabel:null, confianca:null, processadoEm:null,
+    contentDocumentId:null, fileName:null, campos:null, titularidade:null, expandido:false});
+  render();
+  let desfeito = false;
+  const timer = setTimeout(()=>{
+    if(desfeito) return;
+    sfApi(`/documentos/${contentDocumentId}`, {method:'DELETE'}).catch(e=>{
+      Object.assign(d, snapshot);
+      render();
+      toast('Nao foi possivel remover o documento: '+e.message);
+    });
+  }, 5000);
+  toast(snapshot.label+' excluído', ()=>{ desfeito = true; clearTimeout(timer); Object.assign(d, snapshot); render(); });
+}
+
 
 (async function sfBoot(){
   sfHandleOAuthRedirect(); // le access_token/instance_url do fragmento da URL, se estiver voltando do login
