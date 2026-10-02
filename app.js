@@ -2968,6 +2968,20 @@ function tarefasHoje(){
         sub: esc((r.protocolo||'')+' · '+resNomeCliente(r)),
         open: `switchTab('reservas'); go('resDetail',{id:'${r.id}'})`});
     });
+  /* resposta do Gerente que o corretor ainda nao viu: aprovado direto ou recusado nos ultimos 3 dias
+     (HU Contraproposta, CA08). O que o proprio corretor decidiu (aceitar/recusar contraproposta) nao entra. */
+  DB.reservas.filter(r=>{
+    const a = r.aprovacao;
+    if(!a || a.encerradaPeloCorretor || !a.respondidoEm) return false;
+    if(a.status!=='aprovado' && a.status!=='recusado') return false;
+    return (Date.now() - new Date(a.respondidoEm).getTime()) < 3*24*3600*1000;
+  }).forEach(r=>{
+    const ok = r.aprovacao.status==='aprovado';
+    tasks.push({icon: ok?I.check:I.close, bg: ok?'var(--color-success-soft)':'var(--color-danger-soft)', fg: ok?'var(--color-success)':'var(--color-danger)',
+      title: ok ? 'Desconto aprovado pelo Gerente' : 'Desconto recusado pelo Gerente',
+      sub: esc((r.protocolo||'')+' · '+resNomeCliente(r)),
+      open: `switchTab('reservas'); go('resDetail',{id:'${r.id}'})`});
+  });
   DB.clientes.filter(contaTemReserva).forEach(c=>{
     if(c.real) sfCarregarDocumentos(c.id);
     const d = docsPendentes(c);
@@ -3835,8 +3849,9 @@ function responderContraproposta(id, acao){
       return sfCarregarReservas();
     })
     .catch(e=>{
-      render();
       toast('Nao foi possivel responder: '+e.message);
+      /* 409 = ja respondida em outro aparelho; recarrega para a tela refletir o estado real. */
+      return Promise.resolve(sfCarregarReservas()).catch(()=>{}).then(()=>render());
     });
 }
 function timelineHtml(passos){
