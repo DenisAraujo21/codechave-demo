@@ -1,12 +1,11 @@
-<!doctype html><html><head><meta charset=utf8><meta name=viewport content="width=device-width,initial-scale=1,viewport-fit=cover"><style>:root{color-scheme:light;box-sizing:border-box}html{scroll-padding-top:env(safe-area-inset-top,0px)}body{margin:0;padding:0;font:14px -apple-system,BlinkMacSystemFont,sans-serif;background:#faf9f5;color:#141413}img{max-width:100%}[hidden]:not([hidden=until-found i]){display:none!important}</style></head><body>
-
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <title>CodeChave</title>
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Poppins:wght@600;700;800&family=Outfit:wght@400;500;600;700&family=IBM+Plex+Mono:wght@500;600&display=swap" rel="stylesheet">
 <!-- PWA: instalar na tela de inicio do iPhone/Android e abrir em tela cheia, sem
-     a barra do navegador (nem a barra do Claude) - "Adicionar a Tela de Inicio" no
-     Safari, ou "Instalar app" no menu do Chrome -->
+     a barra do navegador - "Adicionar a Tela de Inicio" no Safari, ou "Instalar app" no menu do Chrome -->
 <link rel="manifest" href="manifest.json">
 <link rel="icon" href="icon-192.png">
 <link rel="apple-touch-icon" href="apple-touch-icon.png">
@@ -22,61 +21,56 @@
     });
   }
   // iOS mais antigo nem sempre reporta "display-mode:standalone" direito no CSS,
-  // entao reforca aqui via navigator.standalone (propriedade classica do Safari/iOS)
-  // - ver a classe .standalone-app no CSS acima.
+  // entao reforca aqui via navigator.standalone (ver a classe .standalone-app no CSS).
   if (window.navigator && window.navigator.standalone === true) {
     document.documentElement.classList.add('standalone-app');
   }
 </script>
 <link rel="stylesheet" href="style.css">
+</head>
+<body>
 
 <div class="stage">
   <div class="rig">
     <div class="bezel"></div>
-    <div class="notch"></div>
     <div class="device" id="device">
-      <header class="appbar" id="appbar">
-        <button class="iconbtn" id="backBtn" onclick="goBack()" aria-label="Voltar" hidden>
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 18l-6-6 6-6"/></svg>
-        </button>
-        <h1 id="headerTitle">Início</h1>
-        <div class="header-action" id="headerAction"></div>
-      </header>
-      <input type="file" id="avatarFileInput" accept="image/*" hidden onchange="onAvatarFileChosen(event)">
       <main id="view"></main>
-      <nav class="tabbar" id="tabbar">
-        <button class="tab-btn" data-tab="home" onclick="switchTab('home')">
+      <div id="selbar"></div>
+      <nav class="tabbar" id="tabbar" hidden>
+        <button class="tab-btn" data-tab="home" onclick="tabTap('home')">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 11l9-8 9 8"/><path d="M5 10v10h14V10"/></svg>
           <span>Início</span>
         </button>
-        <button class="tab-btn" data-tab="leads" onclick="switchTab('leads')">
+        <button class="tab-btn" data-tab="clientes" onclick="tabTap('clientes')">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="9" cy="8" r="3.2"/><path d="M2.5 19c0-3.6 2.9-6 6.5-6s6.5 2.4 6.5 6"/><path d="M16 4.2c1.8.5 3 2 3 3.8s-1.2 3.3-3 3.8"/><path d="M21.5 19c0-2.8-1.9-5-4.6-5.7"/></svg>
-          <span>Leads</span>
+          <span>Clientes</span>
         </button>
-        <button class="tab-btn" data-tab="contas" onclick="switchTab('contas')">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="2.5" y="5" width="19" height="14" rx="2.2"/><circle cx="8" cy="12" r="2.1"/><path d="M13.2 10h5.3M13.2 14h3.6"/></svg>
-          <span>Contas</span>
-        </button>
-        <button class="tab-btn" data-tab="empreendimentos" onclick="switchTab('empreendimentos')">
+        <div class="tab-plus">
+          <button onclick="abrirAcoes()" aria-label="Nova ação">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round"><path d="M5 12h14"/><path d="M12 5v14"/></svg>
+          </button>
+        </div>
+        <button class="tab-btn" data-tab="empreendimentos" onclick="tabTap('empreendimentos')">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 21V9l7-5 7 5v12"/><path d="M9 21v-6h4v6"/><path d="M9 12h.01M13 12h.01M9 9h.01M13 9h.01"/></svg>
-          <span>Empreend.</span>
+          <span>Imóveis</span>
         </button>
-        <button class="tab-btn" data-tab="reservas" onclick="switchTab('reservas')">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 3h14v18l-7-4-7 4V3z"/></svg>
-          <span>Reservas</span>
-        </button>
-        <button class="tab-btn" data-tab="negocios" onclick="switchTab('negocios')">
+        <button class="tab-btn" data-tab="negocios" onclick="tabTap('negocios')">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 17l6-6 4 4 8-8"/><path d="M15 7h6v6"/></svg>
-          <span>Negocios</span>
+          <span>Negócios</span>
         </button>
       </nav>
-      <div class="home-indicator"></div>
+      <div id="overlay"></div>
       <div class="toast" id="toast"></div>
     </div>
   </div>
 </div>
 
+<input type="file" id="avatarFileInput" accept="image/*" hidden onchange="onAvatarFileChosen(event)">
+<input type="file" id="doc-cam-input" accept="image/*" capture="environment" hidden onchange="handleDocUploadChange(event)">
+<input type="file" id="doc-file-input" accept="image/*,.pdf" hidden onchange="handleDocUploadChange(event)">
+
 <script src="app.js"></script>
 
 <div id="pdfDoc"></div>
-</body></html>
+</body>
+</html>
