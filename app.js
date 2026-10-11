@@ -2735,7 +2735,11 @@ function tabTap(tab){ switchTab(tab, true); }
 function goBack(){
   if(state.mode==='wizard'){ wizardBack(); return; }
   const s = state.stacks[state.tab];
-  if(s.length>1){ s.pop(); render({resetScroll:true}); }
+  if(s.length>1){
+    /* voltar da tela do empreendimento descarta a comparacao em andamento */
+    if(s[s.length-1].screen==='empDetail' && state.cmp){ state.cmp.sel = []; state.cmp.modo = false; }
+    s.pop(); render({resetScroll:true});
+  }
 }
 function fecharPaineis(){ state.sheet = null; state.docPick = null; state.wa = null; render(); }
 
@@ -3500,7 +3504,7 @@ function screenEmpDetail(id){
     <div class="section-title big" style="margin-top:2px;">
       <span>Unidades</span>
       <span style="display:flex; gap:14px;">
-        <button class="link-btn" onclick="cmpToggleModo()">${state.cmp.modo?'Concluir':'Comparar'}</button>
+        <button class="link-btn" onclick="${state.cmp.modo?'cmpLimpar()':'cmpToggleModo()'}">${state.cmp.modo?'Cancelar':'Comparar'}</button>
         <button class="link-btn" onclick="state.cmp.modo=false; pdfToggleModoSelecao()">${state.pdfModoSelecao?'Concluir seleção':'Selecionar p/ proposta'}</button>
       </span>
     </div>
@@ -3518,7 +3522,9 @@ function unitTile(u){
   const cmpModo = state.cmp.modo;
   const modo = state.pdfModoSelecao;
   const sel = cmpModo ? state.cmp.sel.includes(u.id) : state.pdfSelecao.includes(u.id);
-  const cls = {disponivel:'', reservada:'reserved', vendida:'sold', bloqueada:'blocked'}[st] || 'blocked';
+  /* disponivel = '' (sem classe): `|| 'blocked'` tratava '' como falso e deixava o cartao disponivel cinza e opaco */
+  const CLS_STATUS = {disponivel:'', reservada:'reserved', vendida:'sold', bloqueada:'blocked'};
+  const cls = (st in CLS_STATUS) ? CLS_STATUS[st] : 'blocked';
   const stLabel = {disponivel:'Disponível', reservada:'Reservada', vendida:'Vendida', bloqueada:'Bloqueada'}[st] || '';
   const stCor = {disponivel:'var(--status-available)', reservada:'var(--status-reserved)', vendida:'var(--status-sold)', bloqueada:'var(--status-blocked)'}[st];
   const markCls = sel ? 'sel' : (cmpModo || (modo && disp)) ? 'pick' : ({disponivel:'avail', reservada:'reserved', vendida:'sold', bloqueada:'blocked'}[st] || 'blocked');
@@ -4827,7 +4833,7 @@ function cmpAbrir(){
 function cmpBarraHtml(){
   const us = cmpUnidades(); const n = us.length;
   const ok = n >= 2;
-  return `<div class="sel-bar"><div><b>${n} de ${CMP_MAX} para comparar</b><span>${esc(us.map(u=>unitCode(u)).join(' · '))}${ok?'':' · escolha mais uma'}</span></div><button class="btn btn-primary btn-sm" ${ok?'':'disabled'} onclick="cmpAbrir()">Comparar ${I.arrowR}</button></div>`;
+  return `<div class="sel-bar"><div><b>${n} de ${CMP_MAX} unidades</b><span>${esc(us.map(u=>unitCode(u)).join(' · '))}${ok?'':' · escolha mais uma'}</span></div><span style="display:flex; align-items:center; gap:6px;"><button class="cmp-cancelar" aria-label="Cancelar comparação" onclick="cmpLimpar()">Cancelar</button><button class="btn btn-primary btn-sm" ${ok?'':'disabled'} onclick="cmpAbrir()">Comparar ${I.arrowR}</button></span></div>`;
 }
 
 /* ---------- tela ---------- */
@@ -4896,7 +4902,7 @@ function screenComparar(){
       <div class="cmp-rotulo"></div>${rodape}
     </div>
     ${carregandoTab ? `<div class="sync-row"><span class="spinner"></span> Carregando a tabela de vendas...</div>` : (!tabela ? `<p class="cmp-nota">Sem Tabela de Vendas vigente neste empreendimento: entrada e parcelas não aparecem.</p>` : `<p class="cmp-nota">Entrada e parcelas calculadas pela tabela “${esc(tabela.name||'')}”.</p>`)}
-    <button class="btn btn-ghost btn-lg" style="width:100%;" onclick="cmpLimpar(); goBack()">Limpar comparação</button>`;
+    <button class="btn btn-ghost btn-lg" style="width:100%;" onclick="cmpLimpar(); goBack()">Cancelar comparação</button>`;
   return {title:'Comparar unidades', back:true, hideTab:true, sub:esc(e ? e.nome : ''), body};
 }
 
