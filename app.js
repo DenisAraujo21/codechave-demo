@@ -3938,7 +3938,8 @@ function resCard(r){
 }
 function negocioCard(n){
   const idx = negocioEstagioIdx(n);
-  const eyebrow = n.empreendimentoNome ? n.empreendimentoNome+' · '+negocioUnidadeCurta(n) : (n.unidadeNome||'Negócio');
+  const rv = reservaDoNegocio(n);
+  const eyebrow = n.empreendimentoNome ? n.empreendimentoNome+' · '+negocioUnidadeCurta(n) : (n.unidadeNome || (rv ? [resNomeEmpreendimento(rv), resNomeUnidade(rv)].filter(x=>x && x!=='-').join(' · ') : '') || 'Oportunidade');
   return `
     <button class="list-card" style="flex-direction:column; align-items:stretch; gap:10px; padding:14px;" onclick="state.negTab='resumo'; go('negocioDetail',{id:'${n.id}'})">
       <span style="display:flex; justify-content:space-between; align-items:center; gap:8px;">
