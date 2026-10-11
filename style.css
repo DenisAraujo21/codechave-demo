@@ -694,3 +694,22 @@ p{line-height:1.5;}
 .as-card{gap:12px; padding:10px 14px;}
 .as-card img{width:68px; height:68px;}
 .as-txt{padding-right:30px;}
+/* ---- Comparar unidades ---- */
+.cmp-grade{display:grid; grid-template-columns:84px repeat(var(--cols,3), minmax(0,1fr)); gap:0; background:#fff; border:1px solid var(--grey-200); border-radius:var(--radius-lg); overflow:hidden;}
+.cmp-grade > div{padding:10px 8px; border-top:1px solid var(--grey-200); display:flex; flex-direction:column; justify-content:center; gap:3px; min-width:0;}
+.cmp-rotulo{font:600 11.5px var(--font-sans); color:var(--grey-500); background:var(--grey-50);}
+.cmp-cab{align-items:flex-start; gap:6px !important; padding:12px 8px !important;}
+.cmp-cab b{font:700 14px var(--font-display); color:var(--charcoal-700); word-break:break-word;}
+.cmp-cab .badge{font-size:10px; padding:2px 6px;}
+.cmp-cel span{font:600 12.5px var(--font-sans); color:var(--charcoal-700); word-break:break-word;}
+.cmp-cel.best{background:var(--color-success-soft);}
+.cmp-cel.best span{color:var(--color-success);}
+.cmp-cel i{font:800 9px var(--font-sans); letter-spacing:.05em; text-transform:uppercase; font-style:normal; color:var(--color-success);}
+.cmp-rod{align-items:stretch; gap:6px !important; padding:10px 6px !important;}
+.cmp-rod .btn{padding:0 6px; min-height:36px; font-size:12.5px;}
+.cmp-x{align-self:center; width:30px; height:30px; border:none; background:transparent; color:var(--grey-500); cursor:pointer; display:flex; align-items:center; justify-content:center; padding:0;}
+.cmp-x svg{width:16px; height:16px;}
+.cmp-nota{font-size:12px; color:var(--grey-500); margin:0 4px; text-align:center;}
+.cmp-grade{grid-template-columns:78px repeat(var(--cols,3), minmax(0,1fr));}
+.cmp-cel span{white-space:nowrap; font-size:12px;}
+.cmp-rotulo{font-size:11px;}
