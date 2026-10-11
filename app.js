@@ -2978,59 +2978,116 @@ function resRotuloCurto(r){
   const unidade = [emp, un].filter(x=>x && x!=='-').join(' ');
   return esc([unidade, resNomeCliente(r)].filter(x=>x && x!=='-').join(' · '));
 }
+/* "Para hoje" em grupos priorizados (um item por tipo, com contagem), em vez de uma linha por cliente:
+   1 contraproposta do Gerente, 2 leads esperando > 15 min, 3 visitas de hoje, 4 resposta do Gerente,
+   5 documentos pendentes, 6 desconto aguardando o Gerente. O primeiro grupo vira o destaque "Agora". */
+function hojeISO(){
+  const d = new Date();
+  return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0');
+}
+function nomesCurtos(lista, max){
+  const n = lista.slice(0, max||2);
+  return n.join(', ') + (lista.length > n.length ? ' e +' + (lista.length - n.length) : '');
+}
 function tarefasHoje(){
-  const tasks = [];
-  const late = leadsRoleta().filter(l=>(l.chegouMin||0)>15);
+  const grupos = [];
+  const plural = (n, s, p) => n + ' ' + (n>1 ? p : s);
+  const contra = DB.reservas.filter(r=>r.aprovacao && r.aprovacao.status==='contraproposta');
+  if(contra.length){
+    grupos.push({k:'contra', n:contra.length, icon:I.zap, bg:'var(--sky-100)', fg:'var(--sky-700)', cta:'Responder',
+      title: contra.length>1 ? contra.length+' contrapropostas do Gerente' : 'Contraproposta do Gerente',
+      sub: nomesCurtos(contra.map(r=>resRotuloCurto(r)), 1),
+      open: contra.length===1 ? `switchTab('reservas'); go('resDetail',{id:'${contra[0].id}'})` : `switchTab('negocios')`});
+  }
+  const late = leadsRoleta().filter(l=>(l.chegouMin||0)>15).sort((a,b)=>(b.chegouMin||0)-(a.chegouMin||0));
   if(late.length){
-    tasks.push({icon:I.users, bg:'var(--sky-100)', fg:'var(--sky-700)',
-      title: late.length+(late.length>1?' leads esperando':' lead esperando')+' há mais de 15 min',
-      sub: late.map(l=>esc(l.nome)).join(', '),
+    grupos.push({k:'late', n:late.length, icon:I.users, bg:'var(--color-danger-soft)', fg:'var(--color-danger)', cta:'Atender',
+      title: late.length>1 ? late.length+' leads esperando atendimento' : '1 lead esperando atendimento',
+      sub: nomesCurtos(late.map(l=>esc(l.nome)), 2) + ' · há mais de 15 min',
       open: `switchTab('leads'); go('leadDetail',{id:'${late[0].id}'})`});
   }
-  DB.reservas.filter(r=>r.aprovacao && (r.aprovacao.status==='contraproposta' || r.aprovacao.status==='aguardando'))
-    .sort((a,b)=>(b.aprovacao.status==='contraproposta')-(a.aprovacao.status==='contraproposta'))
-    .forEach(r=>{
-      const contra = r.aprovacao.status==='contraproposta';
-      tasks.push({icon:I.zap, bg: contra?'var(--sky-100)':'var(--sun-100)', fg: contra?'var(--sky-700)':'var(--charcoal-700)',
-        title: contra ? 'Contraproposta do Gerente Comercial' : 'Desconto aguardando aprovação',
-        sub: resRotuloCurto(r),
-        open: `switchTab('reservas'); go('resDetail',{id:'${r.id}'})`});
-    });
-  /* resposta do Gerente que o corretor ainda nao viu: aprovado direto ou recusado nos ultimos 3 dias
-     (HU Contraproposta, CA08). O que o proprio corretor decidiu (aceitar/recusar contraproposta) nao entra. */
-  DB.reservas.filter(r=>{
+  const hoje = hojeISO();
+  const vh = visitasUpcoming().filter(v=>v.data===hoje);
+  if(vh.length){
+    grupos.push({k:'visitas', n:vh.length, icon:I.calendar, bg:'var(--sun-100)', fg:'var(--charcoal-700)', cta:'Ver',
+      title: vh.length>1 ? vh.length+' visitas hoje' : '1 visita hoje',
+      sub: vh.map(v=>{ const l = leadById(v.leadId); return esc(v.hora+' '+(l?primeiroNome(l.nome):'')); }).slice(0,3).join(' · '),
+      open: `switchTab('leads'); go('leadDetail',{id:'${vh[0].leadId}'})`});
+  }
+  /* resposta do Gerente que o corretor ainda nao viu: aprovado direto ou recusado nos ultimos 3 dias */
+  const resp = DB.reservas.filter(r=>{
     const a = r.aprovacao;
     if(!a || a.encerradaPeloCorretor || !a.respondidoEm) return false;
     if(a.status!=='aprovado' && a.status!=='recusado') return false;
     return (Date.now() - new Date(a.respondidoEm).getTime()) < 3*24*3600*1000;
-  }).forEach(r=>{
-    const ok = r.aprovacao.status==='aprovado';
-    tasks.push({icon: ok?I.check:I.close, bg: ok?'var(--color-success-soft)':'var(--color-danger-soft)', fg: ok?'var(--color-success)':'var(--color-danger)',
-      title: ok ? 'Desconto aprovado pelo Gerente' : 'Desconto recusado pelo Gerente',
-      sub: resRotuloCurto(r),
-      open: `switchTab('reservas'); go('resDetail',{id:'${r.id}'})`});
   });
+  if(resp.length){
+    const ok = resp.every(r=>r.aprovacao.status==='aprovado');
+    grupos.push({k:'resp', n:resp.length, icon: ok?I.check:I.close, bg: ok?'var(--color-success-soft)':'var(--color-danger-soft)', fg: ok?'var(--color-success)':'var(--color-danger)', cta:'Ver',
+      title: resp.length>1 ? resp.length+' respostas do Gerente' : (resp[0].aprovacao.status==='aprovado' ? 'Desconto aprovado' : 'Desconto recusado'),
+      sub: nomesCurtos(resp.map(r=>resRotuloCurto(r)), 1),
+      open: resp.length===1 ? `switchTab('reservas'); go('resDetail',{id:'${resp[0].id}'})` : `switchTab('negocios')`});
+  }
+  const comDocs = [];
   DB.clientes.filter(contaTemReserva).forEach(c=>{
     if(c.real) sfCarregarDocumentos(c.id);
     const d = docsPendentes(c);
-    if(d && d.pend>0){
-      tasks.push({icon:I.plus, bg:'var(--color-warning-soft)', fg:'var(--sun-700)',
-        title: d.pend+(d.pend>1?' documentos pendentes · ':' documento pendente · ')+esc(primeiroNome(c.nome)),
-        sub: 'Bloqueia a análise de crédito',
-        open: `abrirConta('${c.id}','docs')`});
-    }
+    if(d && d.pend>0) comDocs.push({c, d});
   });
-  return tasks;
+  if(comDocs.length){
+    grupos.push({k:'docs', n:comDocs.length, icon:I.file, bg:'var(--color-warning-soft)', fg:'var(--sun-700)', cta:'Ver',
+      title: comDocs.length>1 ? 'Documentos pendentes em '+comDocs.length+' clientes' : 'Documentos pendentes de 1 cliente',
+      sub: nomesCurtos(comDocs.map(x=>esc(primeiroNome(x.c.nome))), 3)+' · bloqueiam a análise de crédito',
+      open: comDocs.length===1 ? `abrirConta('${comDocs[0].c.id}','docs')` : `state.segC='contas'; switchTab('clientes', true)`});
+  }
+  const aguard = DB.reservas.filter(r=>r.aprovacao && r.aprovacao.status==='aguardando');
+  if(aguard.length){
+    grupos.push({k:'aguard', n:aguard.length, icon:I.zap, bg:'var(--grey-100)', fg:'var(--charcoal-700)', cta:'Ver',
+      title: aguard.length>1 ? aguard.length+' descontos aguardando o Gerente' : '1 desconto aguardando o Gerente',
+      sub: nomesCurtos(aguard.map(r=>resRotuloCurto(r)), 1),
+      open: aguard.length===1 ? `switchTab('reservas'); go('resDetail',{id:'${aguard[0].id}'})` : `switchTab('negocios')`});
+  }
+  return grupos;
 }
 function irConta(id, tab){ state.contaTab = tab || 'reservas'; go('clienteDetail',{id}); }
 function abrirConta(id, tab){ switchTab('contas'); irConta(id, tab); }
+function tempoEspera(min){
+  min = min||0;
+  if(min < 60) return 'há '+Math.max(1,Math.round(min))+' min';
+  if(min < 1440) return 'há '+Math.round(min/60)+' h';
+  return 'há '+Math.round(min/1440)+' d';
+}
+function moedaCurta(v){
+  v = v||0;
+  if(v >= 1e6) return 'R$ '+(v/1e6).toLocaleString('pt-BR',{maximumFractionDigits:1})+' mi';
+  if(v >= 1e3) return 'R$ '+Math.round(v/1e3).toLocaleString('pt-BR')+' mil';
+  return brl(v);
+}
+function comissoesTotais(){
+  const lista = state.sfComissoesLoaded && !state.sfComissoesError ? state.sfComissoes : null;
+  if(!lista) return null;
+  const aReceber = lista.filter(c=>!comissaoRecebida(c)).reduce((s,c)=>s+(c.valor||0),0);
+  const mes = mesAtualISO();
+  const recebidoMes = lista.filter(c=>comissaoRecebida(c) && String(c.dataPagamento||'').slice(0,7)===mes).reduce((s,c)=>s+(c.valor||0),0);
+  const recebidoTotal = lista.filter(comissaoRecebida).reduce((s,c)=>s+(c.valor||0),0);
+  return {aReceber, recebidoMes, recebidoTotal, qtdAReceber: lista.filter(c=>!comissaoRecebida(c)).length};
+}
+function irLeadsFiltro(f){ state.leadFiltro = f; state.segC = 'leads'; switchTab('clientes', true); }
+/* cartao "Agora": a tarefa mais urgente, com botao de acao */
+function homeAgora(g){
+  return `<button class="agora" onclick="${g.open}">
+    <span class="agora-ic" style="background:${g.bg}; color:${g.fg};">${g.icon}</span>
+    <span class="agora-tx"><i>Agora</i><b>${g.title}</b><span>${g.sub}</span></span>
+    <span class="agora-cta">${g.cta} ${I.arrowR}</span>
+  </button>`;
+}
 function screenHome(){
-  const leadsHoje = DB.leads.filter(l=>l.criado===sfDataCurta(new Date().toISOString())).length;
-  const emNegociacao = DB.leads.filter(l=>l.status!=='Novo' && l.status!=='Convertido' && l.status!=='Desqualificado').length
-    + DB.reservas.filter(r=>r.status==='Em analise' || r.status==='Em análise').length;
-  const roleta = leadsRoleta();
+  const novos = DB.leads.filter(l=>l.status==='Novo').length;
+  const opAbertas = state.sfNegociosLoaded ? DB.negocios.filter(n=>!n.fechada).length : null;
+  const com = comissoesTotais();
+  const fila = leadsRoleta().sort((a,b)=>(b.chegouMin||0)-(a.chegouMin||0));   // mais antigos primeiro
   const visitas = visitasUpcoming();
-  const tarefas = tarefasHoje();
+  const grupos = tarefasHoje();
   const MES = ['JAN','FEV','MAR','ABR','MAI','JUN','JUL','AGO','SET','OUT','NOV','DEZ'];
   const avatar = state.avatarFoto
     ? `<span class="pic" style="background-image:url('${state.avatarFoto}')"></span>`
@@ -3056,37 +3113,40 @@ function screenHome(){
         <button class="circ-btn" onclick="doLogout()" aria-label="Sair / trocar de usuario">${I.logout}</button>
       </div>
       ${roletaCtl}
-      <div class="stats-dark">
-        <div><b>${leadsHoje}</b><span>Leads hoje</span></div>
-        <div><b>${emNegociacao}</b><span>Em negociação</span></div>
-        <div><b style="color:var(--sun-500);">${DB.reservas.length}</b><span>Reservas</span></div>
+      <div class="stats-dark kpis">
+        <button onclick="irLeadsFiltro('Novo')"><b>${novos}</b><span>Leads novos</span></button>
+        <button onclick="switchTab('negocios')"><b>${opAbertas==null?'—':opAbertas}</b><span>Oportunidades</span></button>
+        <button onclick="go('comissoes',{}); sfCarregarComissoes()"><b style="color:var(--sun-500);">${com?moedaCurta(com.aReceber):'—'}</b><span>Comissão a receber</span></button>
       </div>
     </div>`;
-  const body = `
-    <div class="section-title big">Para hoje · ${tarefas.length}</div>
-    ${tarefas.length ? `
-      <div class="tasks">
-        ${tarefas.slice(0,4).map(t=>`
-          <button class="task" onclick="${t.open}">
-            <span class="ti" style="background:${t.bg}; color:${t.fg};">${t.icon}</span>
-            <span style="flex:1; min-width:0;"><b>${t.title}</b><span class="s">${t.sub}</span></span>
-            <span class="chev">${I.next}</span>
-          </button>`).join('')}
-      </div>` : `<div class="empty-ok">${I.checkc}<b style="font-size:13.5px; color:var(--charcoal-700);">Tudo em dia por aqui</b></div>`}
 
-    ${cardAssistente()}
+  const agora = grupos[0];
+  const demais = grupos.slice(1);
+  const linhas = demais.map(g=>`
+        <button class="task" onclick="${g.open}">
+          <span class="ti" style="background:${g.bg}; color:${g.fg};">${g.icon}</span>
+          <span style="flex:1; min-width:0;"><b>${g.title}</b><span class="s">${g.sub}</span></span>
+          <span class="chev">${I.next}</span>
+        </button>`).join('');
+  const blocoHoje = grupos.length
+    ? `${homeAgora(agora)}${demais.length ? `<div class="section-title big" style="margin-top:4px;"><span>Também para hoje</span></div><div class="tasks">${linhas}</div>` : ''}`
+    : `<div class="empty-ok">${I.checkc}<b style="font-size:13.5px; color:var(--charcoal-700);">Tudo em dia por aqui</b></div>`;
 
+  const filaMostrar = fila.slice(0,3);
+  const blocoFila = `
     <div class="section-title big" style="margin-top:6px;">
-      <span style="display:flex; align-items:center; gap:8px;"><span class="live-dot"></span>Leads da roleta · ${roleta.length}</span>
-      <button class="link-btn" onclick="switchTab('leads')">Ver todos</button>
+      <span style="display:flex; align-items:center; gap:8px;"><span class="live-dot"></span>Fila da roleta · ${fila.length}</span>
+      ${fila.length>3 ? `<button class="link-btn" onclick="irLeadsFiltro('Novo')">Ver fila (${fila.length})</button>` : `<button class="link-btn" onclick="irLeadsFiltro('Novo')">Ver leads</button>`}
     </div>
-    ${roleta.length ? roleta.map(roletaLeadCard).join('') : `<div class="empty">Nenhum lead novo na fila agora</div>`}
+    ${filaMostrar.length ? filaMostrar.map(roletaLeadCard).join('') + (fila.length>3 ? `<p class="fila-resto">Mais ${fila.length-3} na fila. Quando você atender, o próximo aparece aqui.</p>` : '')
+      : `<div class="empty">Nenhum lead novo na fila agora</div>`}`;
 
+  const blocoVisitas = `
     <div class="section-title big" style="margin-top:6px;">
       <span>Próximas visitas</span>
       <button class="link-btn" onclick="openAgendarVisita()">Agendar</button>
     </div>
-    ${visitas.length ? visitas.map(v=>{
+    ${visitas.length ? visitas.slice(0,3).map(v=>{
         const l = leadById(v.leadId) || {nome:'Lead'}; const [y,m,d] = (v.data||'').split('-');
         return `<button class="visit-card" onclick="switchTab('leads'); go('leadDetail',{id:'${v.leadId}'})"><span class="d"><b>${d||'--'}</b><span>${m?MES[+m-1]:''}</span></span><span class="t"><b>${esc(l.nome)}</b><span>${esc([v.hora, v.local].filter(Boolean).join(' · '))}</span></span></button>`;
       }).join('') : `
@@ -3096,13 +3156,23 @@ function screenHome(){
           <span class="t">Nenhuma visita agendada. Que tal marcar com um lead da roleta?</span>
           <button class="btn btn-secondary btn-sm" onclick="openAgendarVisita()">Agendar visita</button>
         </div>
-      </div>`}
+      </div>`}`;
 
-    <button class="list-card" onclick="go('comissoes',{}); sfCarregarComissoes()" style="margin-top:6px;">
-      <span class="ic-badge">${I.wallet}</span>
-      <span style="flex:1; min-width:0;"><b class="title-sm" style="font-size:14px;">Comissões</b><span class="sub-sm" style="display:block;">${comissoesResumoCurto()}</span></span>
-      <span class="list-card-chevron">${I.next}</span>
+  const blocoComissao = `
+    <button class="com-card" onclick="go('comissoes',{}); sfCarregarComissoes()">
+      <span class="com-top"><span class="ic-badge">${I.wallet}</span><b>Comissões</b><span class="list-card-chevron">${I.next}</span></span>
+      ${com ? `<span class="com-nums">
+          <span><i>A receber</i><b>${brl(com.aReceber)}</b><small>${com.qtdAReceber} ${com.qtdAReceber===1?'comissão':'comissões'}</small></span>
+          <span><i>Recebido no mês</i><b>${brl(com.recebidoMes)}</b><small>${brl(com.recebidoTotal)} no total</small></span>
+        </span>` : `<span class="sub-sm">${comissoesResumoCurto()}</span>`}
     </button>`;
+
+  const body = `
+    ${blocoHoje}
+    ${cardAssistente()}
+    ${blocoFila}
+    ${blocoVisitas}
+    ${blocoComissao}`;
   return {title:'CodeChave', back:false, top, body};
 }
 function roletaLeadCard(l){
@@ -3116,7 +3186,7 @@ function roletaLeadCard(l){
           <b class="title-sm">${esc(l.nome)}</b>
           <span class="sub-sm">${esc([emp&&emp.nome, l.origem, l.cidade].filter(Boolean).join(' · '))}</span>
         </span>
-        <span class="roleta-time">${chegouLabel(l.chegouMin)}</span>
+        <span class="roleta-time ${(l.chegouMin||0)>30?'atraso':((l.chegouMin||0)>15?'alerta':'')}">${tempoEspera(l.chegouMin)}</span>
       </button>
       <div class="roleta-actions">
         <a class="sq-btn" href="tel:${tel}" aria-label="Ligar para ${esc(l.nome)}">${I.phone}</a>
