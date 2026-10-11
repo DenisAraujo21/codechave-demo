@@ -768,3 +768,5 @@ p{line-height:1.5;}
 .home-row .home-hello{padding-top:0;}
 .home-acoes{display:flex; align-items:center; gap:8px; flex:none; margin-left:auto;}
 .top.home-top .avatar-btn{width:60px; height:60px; font-size:19px;}
+
+.tab-btn span{font-size:9.6px; letter-spacing:-.02em;}
