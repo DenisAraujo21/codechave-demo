@@ -3106,17 +3106,18 @@ function screenHome(){
         </div>` : '';
   const top = `
     <div class="top home-top">
-      <div class="top-row" style="gap:12px; align-items:flex-start;">
+      <div class="top-row home-row">
+        <button class="avatar-btn" onclick="avatarPickerOpen()" aria-label="Alterar foto de perfil">${avatar}<span class="badgecam">${I.camera}</span></button>
         <div class="home-hello">
           <span class="top-eyebrow">Bom te ver</span>
           <b>Olá, ${esc(state.sfUsuarioNome || 'Corretor(a)')}</b>
           <span class="home-date">${hojeExtenso()}</span>
         </div>
-        <button class="avatar-btn" onclick="avatarPickerOpen()" aria-label="Alterar foto de perfil">${avatar}<span class="badgecam">${I.camera}</span></button>
-        <button class="circ-btn plus" onclick="abrirAcoes()" aria-label="Nova ação">${I.plus}</button>
-        <button class="circ-btn" onclick="doLogout()" aria-label="Sair / trocar de usuario">${I.logout}</button>
-      </div>
-      ${roletaCtl}
+        <div class="home-acoes">
+          <button class="circ-btn plus" onclick="abrirAcoes()" aria-label="Nova ação">${I.plus}</button>
+          <button class="circ-btn" onclick="doLogout()" aria-label="Sair / trocar de usuario">${I.logout}</button>
+        </div>
+      </div>      ${roletaCtl}
       <div class="stats-dark kpis">
         <button onclick="irLeadsFiltro('Novo')"><b>${novos}</b><span>Leads novos</span></button>
         <button onclick="switchTab('negocios')"><b>${opAbertas==null?'—':opAbertas}</b><span>Oportunidades</span></button>
