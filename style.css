@@ -713,3 +713,5 @@ p{line-height:1.5;}
 .cmp-grade{grid-template-columns:78px repeat(var(--cols,3), minmax(0,1fr));}
 .cmp-cel span{white-space:nowrap; font-size:12px;}
 .cmp-rotulo{font-size:11px;}
+
+.cmp-cancelar{background:transparent; border:none; color:var(--grey-600); font:600 13px var(--font-sans); padding:0 8px; min-height:36px; cursor:pointer;}
