@@ -550,6 +550,9 @@ async function sfCarregarLeads(){
       email: l.email || '', origem: l.origem || '-', interesse: l.empreendimentoId || null,
       status: l.status || 'Novo', criado: sfDataCurta(l.criadoEm),
       cidade: l.cidade || null, midia: l.midia || null, corretorNome: l.corretorNome || null,
+      celular: l.celular || null, cpf: l.cpf || null, midiaVisita: l.midiaVisita || null, perfil: l.perfil || null, tipoEntrada: l.tipoEntrada || null,
+      obs: l.observacao || null, anotacoes: l.anotacoes || null, prazoPrimeiroContato: l.prazoPrimeiroContato || null,
+      telefoneInvalido: !!l.telefoneInvalido, emailInvalido: !!l.emailInvalido, motivoDescarte: l.motivoDescarte || null, estado: l.estado || null,
       roleta: true, chegouMin: sfMinutosAtras(l.criadoEm), real: true,
     }));
   }catch(e){
@@ -1126,7 +1129,7 @@ function saveLead(){
 /* ordem confirmada pelo Denis olhando o Path ao vivo no Salesforce (a ordem que veio nos
    metadados do PathAssistant/BusinessProcess estava desatualizada - retrieve fresco voltou sem
    pathAssistantSteps, entao a ordem real e a que aparece na tela, nao a do metadado). */
-const LEAD_STAGES = ['Desqualificado','Novo','Contato Realizado','Em Atendimento','Qualificação','Convertido'];
+const LEAD_STAGES = ['Novo','Em Contato','Contato Realizado','Em Atendimento','Qualificação','Convertido'];
 
 /* ---------- CONTA (cliente) ---------- */
 const UF_BRASIL = ['AC','AL','AP','AM','BA','CE','DF','ES','GO','MA','MT','MS','MG','PA','PB','PR','PE','PI','RJ','RN','RS','RO','RR','SC','SP','SE','TO'];
@@ -3118,7 +3121,7 @@ function startNovaReserva(){
 }
 
 /* ---------- CLIENTES (Leads | Contas) ---------- */
-const LEAD_TONE = {'Novo':'sky','Contato Realizado':'neutral','Em Atendimento':'sun','Qualificação':'success','Convertido':'charcoal','Desqualificado':'danger'};
+const LEAD_TONE = {'Novo':'sky','Em Contato':'sky','Contato Realizado':'neutral','Em Atendimento':'sun','Qualificação':'success','Convertido':'charcoal','Desqualificado':'danger'};
 function leadCard(l, i){
   const emp = empById(l.interesse);
   return `
@@ -3157,25 +3160,38 @@ function contaCard(c, i){
       <span class="list-card-chevron">${I.next}</span>
     </button>`;
 }
+/* abas discretas Leads | Contas (texto + contagem, sublinhado no ativo) e filtros de status dos leads */
+const LEAD_FILTROS = ['ativos','Novo','Em Contato','Contato Realizado','Em Atendimento','Qualificação','Desqualificado'];
+function leadEhAtivo(l){ return l.status!=='Desqualificado' && l.status!=='Convertido'; }
 function screenClientesList(){
   const seg = state.segC === 'contas' ? 'contas' : 'leads';
   const qRaw = state.filters.clientesQuery || '';
   const q = semAcento(qRaw.trim());
-  const leads = DB.leads.filter(l=>!q || semAcento(l.nome).includes(q));
+  const filtro = state.leadFiltro || 'ativos';
+  const leadsBusca = DB.leads.filter(l=>!q || semAcento(l.nome).includes(q));
+  const leads = leadsBusca.filter(l=> filtro==='ativos' ? leadEhAtivo(l) : l.status===filtro);
   let contas = DB.clientes.filter(c=>!q || semAcento(c.nome).includes(q) || String(c.cpf||'').includes(q.replace(/\D/g,'')||'§'));
   /* "precisam de atencao primeiro": boleto atrasado, depois documentacao incompleta */
   const score = c => (DB.boletos.some(b=>b.clienteId===c.id && b.status==='Atrasado') ? 2 : 0) + ((docsPendentes(c)||{pend:0}).pend>0 ? 1 : 0);
   contas = contas.map((c,i)=>({c,i})).sort((a,b)=>score(b.c)-score(a.c) || a.i-b.i).map(x=>x.c);
+  const nAtivos = DB.leads.filter(leadEhAtivo).length;
   const topExtra = `
-    <div class="seg">
-      <button class="${seg==='leads'?'on':''}" onclick="state.segC='leads'; render({resetScroll:true})">Leads · ${DB.leads.length}</button>
-      <button class="${seg==='contas'?'on':''}" onclick="state.segC='contas'; render({resetScroll:true})">Contas · ${DB.clientes.length}</button>
+    <div class="subtabs" role="tablist">
+      <button role="tab" aria-selected="${seg==='leads'}" class="${seg==='leads'?'on':''}" onclick="state.segC='leads'; render({resetScroll:true})">Leads<i>${nAtivos}</i></button>
+      <button role="tab" aria-selected="${seg==='contas'}" class="${seg==='contas'?'on':''}" onclick="state.segC='contas'; render({resetScroll:true})">Contas<i>${DB.clientes.length}</i></button>
     </div>
-    <div class="top-search">${I.search}<input id="clientesSearch" placeholder="Buscar por nome ou CPF" value="${esc(qRaw)}" oninput="state.filters.clientesQuery=this.value; render()"></div>`;
+    <div class="top-search">${I.search}<input id="clientesSearch" placeholder="${seg==='leads'?'Buscar lead por nome':'Buscar por nome ou CPF'}" value="${esc(qRaw)}" oninput="state.filters.clientesQuery=this.value; render()"></div>`;
+  const nStatus = s => s==='ativos' ? leadsBusca.filter(leadEhAtivo).length : leadsBusca.filter(l=>l.status===s).length;
+  const chips = seg==='leads' ? `
+    <div class="chips-row" role="group" aria-label="Filtrar leads por status">
+      ${LEAD_FILTROS.filter(s=>s==='ativos' || s===filtro || nStatus(s)>0).map(s=>`<button class="fchip ${filtro===s?'on':''}" onclick="state.leadFiltro='${s}'; render({resetScroll:true})">${s==='ativos'?'Ativos':(s==='Desqualificado'?'Desqualificados':s)}<i>${nStatus(s)}</i></button>`).join('')}
+    </div>` : '';
   const list = seg==='leads' ? leads.map(leadCard) : contas.map(contaCard);
+  const titulo = seg==='leads' ? (filtro==='ativos' ? 'Leads ativos · mais recentes primeiro' : (filtro==='Desqualificado'?'Desqualificados':filtro)+' · mais recentes primeiro') : 'Precisam de atenção primeiro';
   const body = `
-    <div class="section-title" style="margin-top:0;">${seg==='leads' ? 'Mais recentes primeiro' : 'Precisam de atenção primeiro'}</div>
-    ${list.length ? `<div class="stack">${list.join('')}</div>` : `<div class="empty">${qRaw ? 'Ninguém encontrado com “'+esc(qRaw)+'”' : (seg==='leads' ? 'Nenhum lead ainda' : 'Nenhuma conta cadastrada ainda')}</div>`}`;
+    ${chips}
+    <div class="section-title" style="margin-top:0;">${titulo}</div>
+    ${list.length ? `<div class="stack">${list.join('')}</div>` : `<div class="empty">${qRaw ? 'Ninguém encontrado com “'+esc(qRaw)+'”' : (seg==='leads' ? 'Nenhum lead neste filtro' : 'Nenhuma conta cadastrada ainda')}</div>`}`;
   const action = seg==='leads'
     ? `<button class="circ-btn" onclick="go('leadForm',{})" aria-label="Novo lead">${I.plus}</button>`
     : `<button class="circ-btn" onclick="go('clienteForm',{})" aria-label="Nova conta">${I.plus}</button>`;
@@ -3205,15 +3221,20 @@ function setLeadStatus(id, status, silent){
 function leadStatusPath(l){
   const converted = DB.clientes.some(c=>c.origemLeadId===l.id);
   const effective = converted ? 'Convertido' : l.status;
+  const desq = effective === 'Desqualificado';
   const idx = LEAD_STAGES.indexOf(effective);
-  return `
+  const caminho = `
     <div class="lead-path">
       ${LEAD_STAGES.map((s,i)=>{
-        const st = i<idx ? 'done' : i===idx ? 'current' : 'todo';
+        const st = (!desq && i<idx) ? 'done' : (!desq && i===idx) ? 'current' : 'todo';
         const locked = s==='Convertido' || st==='current';
-        return `<button class="path-step ${st}" ${locked?'disabled':`onclick="setLeadStatus('${l.id}','${s}')"`}>${st==='done'?`<span class="path-check">${I.check}</span>`:''}${s==='Contato Realizado'?'Contato':s}</button>`;
+        return `<button class="path-step ${st}" ${locked?'disabled':`onclick="setLeadStatus('${l.id}','${s}')"`}>${st==='done'?`<span class="path-check">${I.check}</span>`:''}${s}</button>`;
       }).join('')}
     </div>`;
+  const rodape = desq
+    ? `<div class="alert-card" style="align-items:center;">${I.alertc}<div style="flex:1;"><b>Lead desqualificado</b>${l.motivoDescarte?`<div class="muted" style="font-size:12px; margin-top:1px;">${esc(l.motivoDescarte)}</div>`:''}</div><button class="btn btn-secondary btn-sm" onclick="setLeadStatus('${l.id}','Novo')">Reativar</button></div>`
+    : (converted ? '' : `<button class="link-btn" style="align-self:flex-start; color:var(--color-danger);" onclick="setLeadStatus('${l.id}','Desqualificado')">Desqualificar lead</button>`);
+  return caminho + rodape;
 }
 function actRow(tel, email, hlFn, hlIcon, hlLabel){
   const t = telDigitos(tel);
@@ -3224,6 +3245,13 @@ function actRow(tel, email, hlFn, hlIcon, hlLabel){
       ${email ? `<a class="act" href="mailto:${esc(email)}"><span class="ic">${I.mail}</span>E-mail</a>` : `<button class="act" onclick="toast('Sem e-mail cadastrado')"><span class="ic">${I.mail}</span>E-mail</button>`}
       <button class="act hl" onclick="${hlFn}"><span class="ic">${hlIcon}</span>${hlLabel}</button>
     </div>`;
+}
+/* grupo de campos: so' mostra linhas preenchidas (as obrigatorias aparecem com traco) */
+function kvGrupo(titulo, linhas){
+  const vis = linhas.filter(([k,v,obrig])=>obrig || (v!=null && v!=='' && v!=='-'));
+  if(!vis.length) return '';
+  return `<div class="section-title">${titulo}</div>
+    <div class="kv-table">${vis.map(([k,v])=>`<div class="kv-row"><span class="k">${k}</span><span class="v">${v==null||v===''||v==='-'?'—':esc(v)}</span></div>`).join('')}</div>`;
 }
 function screenLeadDetail(id){
   const l = leadById(id);
@@ -3238,13 +3266,10 @@ function screenLeadDetail(id){
         <span class="id-avatar">${initials(l.nome)}</span>
         <div style="min-width:0;"><h1 class="id-name">${esc(l.nome)}</h1><span class="id-sub">${esc(l.origem)} · criado ${esc(l.criado)}</span></div>
       </div>
-      ${actRow(l.telefone, l.email, `openAgendarVisita('${l.id}')`, I.calendar, 'Agendar')}
+      ${actRow(l.telefone||l.celular, l.email, `openAgendarVisita('${l.id}')`, I.calendar, 'Agendar')}
     </div>`;
-  const kv = [['Telefone', l.telefone||'-'], ['E-mail', l.email||'-'], ['Origem', l.origem||'-'], ['Interesse', emp?emp.nome:'-']];
-  if(l.cidade) kv.push(['Cidade', l.cidade]);
-  if(l.midia) kv.push(['Mídia', l.midia]);
-  if(l.corretorNome) kv.push(['Corretor', l.corretorNome]);
-  kv.push(['Criado', l.criado ? l.criado+'/2026' : '-']);
+  const cidadeUf = [l.cidade, l.estado].filter(Boolean).join(' / ');
+  const prazo = l.prazoPrimeiroContato ? fmtDataBR(String(l.prazoPrimeiroContato).slice(0,10)) + ' ' + String(l.prazoPrimeiroContato).slice(11,16) : null;
   const body = `
     <div class="section-title" style="margin-top:0;">Status do lead</div>
     ${leadStatusPath(l)}
@@ -3253,8 +3278,30 @@ function screenLeadDetail(id){
         <span style="flex:1; min-width:0;"><b>Visita agendada</b><span>${fmtDataBR(visita.data)} às ${esc(visita.hora)} · ${esc(visita.local||'Local a definir')}</span></span>
         <button class="list-remove" onclick="cancelarVisita('${visita.id}')" aria-label="Cancelar visita">${I.close}</button>
       </div>` : ''}
-    <div class="kv-table">${kv.map(([k,v])=>`<div class="kv-row"><span class="k">${k}</span><span class="v">${esc(v)}</span></div>`).join('')}</div>
-    ${l.obs ? `<div class="section-title">Observações</div><p class="muted" style="font-size:13.5px; margin:0 4px;">${esc(l.obs)}</p>` : ''}
+    ${kvGrupo('Contato', [
+      ['Telefone', l.telefone ? l.telefone + (l.telefoneInvalido?' (inválido)':'') : null, true],
+      ['Celular', l.celular],
+      ['E-mail', l.email ? l.email + (l.emailInvalido?' (inválido)':'') : null, true],
+      ['Cidade', cidadeUf]
+    ])}
+    ${kvGrupo('Origem e interesse', [
+      ['Origem', l.origem, true],
+      ['Mídia impactada', l.midia],
+      ['Mídia da visita', l.midiaVisita],
+      ['Tipo de entrada', l.tipoEntrada],
+      ['Interesse', emp?emp.nome:null, true],
+      ['Corretor', l.corretorNome]
+    ])}
+    ${kvGrupo('Perfil', [
+      ['CPF', l.cpf],
+      ['Perfil do cliente', l.perfil]
+    ])}
+    ${kvGrupo('Acompanhamento', [
+      ['Criado', l.criado ? l.criado+'/2026' : null, true],
+      ['Prazo do 1º contato', prazo]
+    ])}
+    ${l.obs ? `<div class="section-title">Observações</div><p class="muted" style="font-size:13.5px; margin:0 4px; line-height:1.5;">${esc(l.obs)}</p>` : ''}
+    ${l.anotacoes ? `<div class="section-title">Anotações</div><p class="muted" style="font-size:13.5px; margin:0 4px; line-height:1.5; white-space:pre-line;">${esc(l.anotacoes)}</p>` : ''}
     ${converted
       ? `<div class="alert-card ok" style="align-items:center; justify-content:center; padding:14px; gap:8px;">${I.checkc}<b style="color:var(--color-success);">Convertido em conta</b></div>`
       : `<button class="btn btn-primary btn-lg" onclick="go('clienteForm',{leadId:'${l.id}'})">Converter em conta</button>`}`;
@@ -3312,18 +3359,23 @@ function screenClienteDetail(id){
           </span>
           <span style="display:flex; justify-content:space-between; align-items:center;">${badge(resTone(r.status), esc(r.status))}<span style="font:600 13px var(--font-sans); color:var(--sky-700);">Ver reserva</span></span>
         </button>`);
-    const kv = [['Telefone', c.telefone||'-'], ['E-mail', c.email||'-'], ['Estado civil', c.estadoCivil||'-'], ['Profissão', c.profissao||'-'], ['Renda mensal', c.renda?brl(c.renda):'-'], ['Endereço', c.endereco||'-']];
-    if(c.rg && c.rg!=='-') kv.unshift(['RG', c.rg]);
-    if(c.naturalidade) kv.push(['Naturalidade', c.naturalidade]);
-    if(c.dataNascimento) kv.push(['Nascimento', fmtDataBR(c.dataNascimento)]);
-    if(c.nomeMae) kv.push(['Nome da mãe', c.nomeMae]);
-    if(c.nomePai) kv.push(['Nome do pai', c.nomePai]);
-    if((c.estadoCivil||'').startsWith('Casado') && c.conjugeNome) kv.push(['Cônjuge', c.conjugeNome]);
-    if(c.empreendimentoInteresseNome) kv.push(['Empreendimento de interesse', c.empreendimentoInteresseNome]);
+    const raw = state.sfContasRaw[c.id] || {};
+    const en = raw.endereco || {};
+    const linhaEnd = [[en.tipoLogradouro, en.logradouro].filter(Boolean).join(' '), en.numero, en.complemento].filter(Boolean).join(', ');
+    const linhaCid = [en.bairro, [en.cidade, en.estado].filter(Boolean).join('/')].filter(Boolean).join(' · ');
+    const casado = (c.estadoCivil||'').startsWith('Casado') || (c.estadoCivil||'')==='União Estável';
+    const grupos = [
+      kvGrupo('Contato', [['Telefone', c.telefone, true], ['E-mail', c.email, true]]),
+      kvGrupo('Documentos', [['CPF', c.cpf], ['RG', c.rg], ['Órgão emissor', c.orgaoEmissor], ['Expedição do RG', c.dataExpedicaoRG ? fmtDataBR(c.dataExpedicaoRG) : null], ['Documento', c.documento]]),
+      kvGrupo('Dados pessoais', [['Nascimento', c.dataNascimento ? fmtDataBR(c.dataNascimento) : null], ['Gênero', c.genero], ['Naturalidade', c.naturalidade], ['Estado civil', c.estadoCivil, true], ['Cônjuge', casado ? c.conjugeNome : null], ['Nome da mãe', c.nomeMae], ['Nome do pai', c.nomePai]]),
+      kvGrupo('Profissão e renda', [['Profissão', c.profissao, true], ['Renda mensal', c.renda ? brl(c.renda) : null, true]]),
+      kvGrupo('Endereço', [['Logradouro', linhaEnd], ['Bairro / cidade', linhaCid], ['CEP', en.cep]]),
+      kvGrupo('Interesse', [['Empreendimento de interesse', c.empreendimentoInteresseNome]])
+    ].join('');
     panel = `
       ${cards.length ? cards.join('') : `<div class="empty">Nenhuma reserva ainda</div>`}
-      <div class="section-title">Dados</div>
-      <div class="kv-table">${kv.map(([k,v])=>`<div class="kv-row"><span class="k">${k}</span><span class="v">${esc(v)}</span></div>`).join('')}</div>`;
+      ${grupos}
+      <button class="btn btn-secondary btn-lg" style="width:100%;" onclick="go('contaEditar',{id:'${c.id}'})">Completar cadastro</button>`;
   } else if(tab==='docs'){
     panel = documentosChecklist(c);
   } else {
