@@ -2953,6 +2953,12 @@ function contaTemReserva(c){
 /* "Para hoje": ate 4 tarefas que dependem do corretor - lead da roleta esperando, contraproposta ou
    aprovacao de desconto pendente, documento obrigatorio pendente. Boleto atrasado NAO entra
    (fica com o financeiro). */
+/* texto da tarefa: unidade e cliente (nunca o Id tecnico da reserva) */
+function resRotuloCurto(r){
+  const emp = resNomeEmpreendimento(r), un = resNomeUnidade(r);
+  const unidade = [emp, un].filter(x=>x && x!=='-').join(' ');
+  return esc([unidade, resNomeCliente(r)].filter(x=>x && x!=='-').join(' · '));
+}
 function tarefasHoje(){
   const tasks = [];
   const late = leadsRoleta().filter(l=>(l.chegouMin||0)>15);
@@ -2968,7 +2974,7 @@ function tarefasHoje(){
       const contra = r.aprovacao.status==='contraproposta';
       tasks.push({icon:I.zap, bg: contra?'var(--sky-100)':'var(--sun-100)', fg: contra?'var(--sky-700)':'var(--charcoal-700)',
         title: contra ? 'Contraproposta do Gerente Comercial' : 'Desconto aguardando aprovação',
-        sub: esc((r.protocolo||'')+' · '+resNomeCliente(r)),
+        sub: resRotuloCurto(r),
         open: `switchTab('reservas'); go('resDetail',{id:'${r.id}'})`});
     });
   /* resposta do Gerente que o corretor ainda nao viu: aprovado direto ou recusado nos ultimos 3 dias
@@ -2982,7 +2988,7 @@ function tarefasHoje(){
     const ok = r.aprovacao.status==='aprovado';
     tasks.push({icon: ok?I.check:I.close, bg: ok?'var(--color-success-soft)':'var(--color-danger-soft)', fg: ok?'var(--color-success)':'var(--color-danger)',
       title: ok ? 'Desconto aprovado pelo Gerente' : 'Desconto recusado pelo Gerente',
-      sub: esc((r.protocolo||'')+' · '+resNomeCliente(r)),
+      sub: resRotuloCurto(r),
       open: `switchTab('reservas'); go('resDetail',{id:'${r.id}'})`});
   });
   DB.clientes.filter(contaTemReserva).forEach(c=>{
