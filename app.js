@@ -2779,6 +2779,7 @@ function currentScreen(){
     case 'comissoes': return screenComissoes();
     case 'propostaResumo': return screenPropostaResumo();
     case 'assistente': return screenAssistente();
+    case 'comparar': return screenComparar();
     default: return {title:'', back:false, body:''};
   }
 }
@@ -2842,6 +2843,7 @@ function renderSelBar(s){
   const box = $('selbar');
   const top = state.mode==='tabs' ? state.stacks[state.tab][state.stacks[state.tab].length-1].screen : null;
   const unidades = state.pdfSelecao.map(id=>unitById(id)).filter(Boolean);
+  if(state.cmp && state.cmp.sel.length && (top==='empDetail' || top==='unidadeDetail')){ box.innerHTML = cmpBarraHtml(); return; }
   if(unidades.length && (top==='empDetail' || top==='unidadeDetail')){
     const total = unidades.reduce((a,u)=>a+(u.valor||0),0);
     box.innerHTML = `<div class="sel-bar"><div><b>${unidades.length} ${unidades.length>1?'unidades selecionadas':'unidade selecionada'}</b><span>Total ${brl(total)}</span></div><button class="btn btn-primary btn-sm" onclick="go('propostaResumo',{})">Ver proposta ${I.arrowR}</button></div>`;
@@ -3497,9 +3499,13 @@ function screenEmpDetail(id){
     ${estoquePills(e, filter)}
     <div class="section-title big" style="margin-top:2px;">
       <span>Unidades</span>
-      <button class="link-btn" onclick="pdfToggleModoSelecao()">${state.pdfModoSelecao?'Concluir seleção':'Selecionar p/ proposta'}</button>
+      <span style="display:flex; gap:14px;">
+        <button class="link-btn" onclick="cmpToggleModo()">${state.cmp.modo?'Concluir':'Comparar'}</button>
+        <button class="link-btn" onclick="state.cmp.modo=false; pdfToggleModoSelecao()">${state.pdfModoSelecao?'Concluir seleção':'Selecionar p/ proposta'}</button>
+      </span>
     </div>
     ${state.pdfModoSelecao ? `<div style="font-size:12.5px; color:var(--grey-600); padding:0 4px; margin-top:-6px;">Toque nas unidades disponíveis para montar a proposta.</div>` : ''}
+    ${state.cmp.modo ? `<div style="font-size:12.5px; color:var(--grey-600); padding:0 4px; margin-top:-6px;">Toque em até ${CMP_MAX} unidades para compará-las lado a lado.</div>` : ''}
     <div class="search-wrap">${I.search}<input id="unitSearch" placeholder="Buscar unidade por código" value="${esc(state.filters.unitSearch)}" oninput="state.filters.unitSearch=this.value; render()"></div>
     ${unidadesSection}`;
   return {title:e.nome, back:true, top: empHero(e, fotos, gi), body, sheetClass:''};
@@ -3509,14 +3515,17 @@ function screenEmpDetail(id){
 function unitTile(u){
   const st = u.status;
   const disp = st==='disponivel';
+  const cmpModo = state.cmp.modo;
   const modo = state.pdfModoSelecao;
-  const sel = state.pdfSelecao.includes(u.id);
+  const sel = cmpModo ? state.cmp.sel.includes(u.id) : state.pdfSelecao.includes(u.id);
   const cls = {disponivel:'', reservada:'reserved', vendida:'sold', bloqueada:'blocked'}[st] || 'blocked';
   const stLabel = {disponivel:'Disponível', reservada:'Reservada', vendida:'Vendida', bloqueada:'Bloqueada'}[st] || '';
   const stCor = {disponivel:'var(--status-available)', reservada:'var(--status-reserved)', vendida:'var(--status-sold)', bloqueada:'var(--status-blocked)'}[st];
-  const markCls = sel ? 'sel' : (modo && disp) ? 'pick' : ({disponivel:'avail', reservada:'reserved', vendida:'sold', bloqueada:'blocked'}[st] || 'blocked');
+  const markCls = sel ? 'sel' : (cmpModo || (modo && disp)) ? 'pick' : ({disponivel:'avail', reservada:'reserved', vendida:'sold', bloqueada:'blocked'}[st] || 'blocked');
   const meta = u.horizontal ? `${u.metragem} m²` : `${u.andar}º andar · ${u.metragem} m²${u.suite?` · ${u.suite} suíte${u.suite>1?'s':''}`:''}`;
-  const onclick = modo
+  const onclick = cmpModo
+    ? `cmpToggleUnidade('${u.id}')`
+    : modo
     ? (disp ? `pdfToggleUnidade('${u.id}')` : `toast('Só unidades disponíveis entram na proposta')`)
     : `go('unidadeDetail',{id:'${u.id}'})`;
   return `
@@ -3524,7 +3533,7 @@ function unitTile(u){
       <div class="top2"><span class="code">${esc(unitCode(u))}</span><span class="mark ${markCls}">${sel?I.check:''}</span></div>
       <span class="sm">${esc(meta)}</span>
       <span class="vl">${brl(u.valor)}</span>
-      ${disp && !modo ? `<button class="rsv" onclick="event.stopPropagation(); startWizard('${u.id}')">Reservar</button>` : (!disp ? `<span class="stl" style="color:${stCor};">${stLabel}</span>` : '<span class="stl"></span>')}
+      ${disp && !modo && !cmpModo ? `<button class="rsv" onclick="event.stopPropagation(); startWizard('${u.id}')">Reservar</button>` : (!disp ? `<span class="stl" style="color:${stCor};">${stLabel}</span>` : '<span class="stl"></span>')}
     </div>`;
 }
 function onUnitTap(id){ go('unidadeDetail',{id}); }
@@ -3556,6 +3565,7 @@ function screenUnidadeDetail(id){
       <div class="kv-row"><span class="k">Suítes</span><span class="v">${u.suite}</span></div>
       <div class="kv-row"><span class="k">Situação da obra</span><span class="v">${esc(e.status||'-')}</span></div>
     </div>
+    <button class="btn btn-secondary btn-lg" style="width:100%;" onclick="cmpToggleDaTela('${u.id}')">${state.cmp.sel.includes(u.id)?'Remover da comparação':'Adicionar à comparação'}</button>
     ${disp ? `
       <button class="btn btn-primary btn-lg" onclick="startWizard('${u.id}')">Iniciar reserva</button>
       <div class="btn-row">
@@ -4755,7 +4765,8 @@ function renderAssistFab(s, hideTab){
   const dev = $('device'); if(!dev) return;
   let fab = $('asFab');
   const top = state.mode==='tabs' ? state.stacks[state.tab][state.stacks[state.tab].length-1].screen : null;
-  const mostrar = state.mode==='tabs' && !hideTab && top && top!=='home' && top!=='assistente';
+  const barraAberta = !!(selbar && selbar.innerHTML.trim());
+  const mostrar = state.mode==='tabs' && !hideTab && top && top!=='home' && top!=='assistente' && !barraAberta;
   if(!mostrar){ if(fab) fab.remove(); return; }
   if(fab) return;
   fab = document.createElement('button');
@@ -4764,6 +4775,129 @@ function renderAssistFab(s, hideTab){
   fab.onclick = () => abrirAssistente();
   fab.innerHTML = `<span class="av"><img src="assets/arti-ola.png" alt=""><b>IA</b></span><span class="lb">Pergunte ao Arti</span>`;
   dev.appendChild(fab);
+}
+
+
+/* =====================================================================================
+   COMPARAR UNIDADES (mesma ideia do "Comparar unidades" do Mapa de Disponibilidade no Salesforce):
+   o corretor marca ate 3 unidades do empreendimento e ve lado a lado valor, valor por m2, area,
+   suites, vagas, andar e, quando ha Tabela de Vendas, entrada e parcelas mensais. O melhor valor
+   de cada linha e' destacado e cada coluna tem "Reservar".
+   ===================================================================================== */
+const CMP_MAX = 3;
+const CMP_RE_ENTRADA = /^(ato|entrada|sinal)/i;
+const CMP_RE_MENSAL = /mensa(l|is)/i;
+const CMP_RE_TABELA_PADRAO = /financiamento direto/i;
+state.cmp = state.cmp || { modo:false, sel:[], empId:null };
+
+function cmpUnidades(){ return state.cmp.sel.map(id=>unitById(id)).filter(Boolean); }
+function cmpToggleModo(){
+  state.cmp.modo = !state.cmp.modo;
+  if(state.cmp.modo) state.pdfModoSelecao = false;
+  render();
+}
+function cmpToggleUnidade(id){
+  const u = unitById(id); if(!u) return;
+  if(state.cmp.empId && state.cmp.empId !== u.empId) state.cmp.sel = [];
+  state.cmp.empId = u.empId;
+  const i = state.cmp.sel.indexOf(id);
+  if(i >= 0){ state.cmp.sel.splice(i,1); }
+  else if(state.cmp.sel.length >= CMP_MAX){ toast('Compare até '+CMP_MAX+' unidades por vez. Remova uma para trocar.'); return; }
+  else state.cmp.sel.push(id);
+  render();
+}
+/* botao "Adicionar a comparacao" na tela da unidade */
+function cmpToggleDaTela(id){
+  const antes = state.cmp.sel.includes(id);
+  cmpToggleUnidade(id);
+  if(antes !== state.cmp.sel.includes(id)) toast(antes ? 'Removida da comparação' : 'Adicionada à comparação');
+}
+function cmpRemover(id){
+  state.cmp.sel = state.cmp.sel.filter(x=>x!==id);
+  render();
+}
+function cmpLimpar(){ state.cmp.sel = []; state.cmp.modo = false; render(); }
+function cmpAbrir(){
+  if(state.cmp.sel.length < 2){ toast('Escolha pelo menos 2 unidades para comparar'); return; }
+  const u = unitById(state.cmp.sel[0]);
+  if(u) sfCarregarTabelasVendas(u.empId);
+  go('comparar', {});
+}
+/* barra "Comparando N de 3 - Comparar" (empreendimento / unidade) */
+function cmpBarraHtml(){
+  const us = cmpUnidades(); const n = us.length;
+  const ok = n >= 2;
+  return `<div class="sel-bar"><div><b>${n} de ${CMP_MAX} para comparar</b><span>${esc(us.map(u=>unitCode(u)).join(' · '))}${ok?'':' · escolha mais uma'}</span></div><button class="btn btn-primary btn-sm" ${ok?'':'disabled'} onclick="cmpAbrir()">Comparar ${I.arrowR}</button></div>`;
+}
+
+/* ---------- tela ---------- */
+function cmpFmtMoeda(v, casas){
+  if(v == null || !isFinite(v)) return '—';
+  return 'R$ ' + Number(v).toLocaleString('pt-BR', {minimumFractionDigits:casas||0, maximumFractionDigits:casas||0});
+}
+function cmpTabela(empId){
+  const t = state.sfTabelasVendasCache[empId];
+  if(!Array.isArray(t) || !t.length) return null;
+  return t.find(x=>CMP_RE_TABELA_PADRAO.test(x.name||'')) || t[0];
+}
+/* linha: melhor 'min' | 'max' | null; so' destaca quando ha 2+ valores e eles diferem */
+function cmpLinha(rotulo, valores, formatar, melhor){
+  const validos = valores.filter(v=>v != null && isFinite(v));
+  let alvo = null;
+  if(melhor && validos.length >= 2){
+    const menor = Math.min(...validos), maior = Math.max(...validos);
+    if(menor !== maior) alvo = melhor === 'min' ? menor : maior;
+  }
+  return `<div class="cmp-rotulo">${rotulo}</div>` + valores.map(v=>{
+    const best = alvo !== null && v === alvo;
+    return `<div class="cmp-cel ${best?'best':''}"><span>${v==null||!isFinite(v)?'—':formatar(v)}</span>${best?'<i>Melhor</i>':''}</div>`;
+  }).join('');
+}
+function screenComparar(){
+  const us = cmpUnidades();
+  if(us.length < 2){
+    return {title:'Comparar unidades', back:true, hideTab:true, sub:'Escolha pelo menos 2 unidades no empreendimento.',
+      body: emptyState('Nada para comparar ainda', I.building)};
+  }
+  const e = empById(us[0].empId);
+  const tabela = cmpTabela(us[0].empId);
+  const series = tabela ? [...(tabela.series||[])].sort((a,b)=>(a.ordem||0)-(b.ordem||0)) : [];
+  const entrada = series.find(s=>CMP_RE_ENTRADA.test(s.nome||''));
+  const mensal = series.find(s=>CMP_RE_MENSAL.test(s.nome||''));
+  const valor = us.map(u=>u.valor || null);
+  const area = us.map(u=>u.metragem || null);
+  const stLabel = {disponivel:'Disponível', reservada:'Reservada', vendida:'Vendida', bloqueada:'Bloqueada'};
+  const stCls = {disponivel:'badge-success', reservada:'badge-warning', vendida:'badge-danger', bloqueada:'badge-neutral'};
+  let linhas = '';
+  linhas += cmpLinha('Valor', valor, v=>cmpFmtMoeda(v), 'min');
+  linhas += cmpLinha('Valor por m²', valor.map((v,i)=>v && area[i] ? v/area[i] : null), v=>cmpFmtMoeda(v), 'min');
+  linhas += cmpLinha('Área privativa', area, v=>String(v).replace('.',',')+' m²', 'max');
+  linhas += cmpLinha('Suítes', us.map(u=>u.suite != null ? u.suite : null), v=>String(v), 'max');
+  linhas += cmpLinha('Vagas', us.map(u=>u.vaga != null ? u.vaga : null), v=>String(v), 'max');
+  if(us.some(u=>!u.horizontal)) linhas += cmpLinha('Andar', us.map(u=>u.horizontal ? null : u.andar), v=>v+'º', 'max');
+  if(entrada && Number(entrada.percentual) > 0){
+    const pct = Number(entrada.percentual);
+    linhas += cmpLinha('Entrada ('+String(pct).replace('.',',')+'%)', valor.map(v=>v ? v*pct/100 : null), v=>cmpFmtMoeda(v), 'min');
+  }
+  if(mensal && Number(mensal.quantidade) > 0 && Number(mensal.percentual) > 0){
+    const q = Number(mensal.quantidade), pct = Number(mensal.percentual);
+    linhas += cmpLinha(q+' mensais de', valor.map(v=>v ? v*pct/100/q : null), v=>cmpFmtMoeda(v,2), 'min');
+  }
+  const carregandoTab = state.sfTabelasVendasCache[us[0].empId] === null;
+  const cab = us.map(u=>`<div class="cmp-cab"><b>${esc(unitCode(u))}</b><span class="badge ${stCls[u.status]||'badge-neutral'}">${stLabel[u.status]||''}</span></div>`).join('');
+  const rodape = us.map(u=>`<div class="cmp-rod">
+      <button class="btn btn-primary btn-sm" ${u.status==='disponivel'?'':'disabled'} onclick="startWizard('${u.id}')">${u.status==='disponivel'?'Reservar':(stLabel[u.status]||'Indisponível')}</button>
+      <button class="cmp-x" aria-label="Remover ${esc(unitCode(u))} da comparação" onclick="cmpRemover('${u.id}')">${I.close}</button>
+    </div>`).join('');
+  const body = `
+    <div class="cmp-grade" style="--cols:${us.length};">
+      <div class="cmp-rotulo"></div>${cab}
+      ${linhas}
+      <div class="cmp-rotulo"></div>${rodape}
+    </div>
+    ${carregandoTab ? `<div class="sync-row"><span class="spinner"></span> Carregando a tabela de vendas...</div>` : (!tabela ? `<p class="cmp-nota">Sem Tabela de Vendas vigente neste empreendimento: entrada e parcelas não aparecem.</p>` : `<p class="cmp-nota">Entrada e parcelas calculadas pela tabela “${esc(tabela.name||'')}”.</p>`)}
+    <button class="btn btn-ghost btn-lg" style="width:100%;" onclick="cmpLimpar(); goBack()">Limpar comparação</button>`;
+  return {title:'Comparar unidades', back:true, hideTab:true, sub:esc(e ? e.nome : ''), body};
 }
 
 
