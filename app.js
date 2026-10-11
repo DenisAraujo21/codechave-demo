@@ -2734,6 +2734,7 @@ function switchTab(tab, keepSeg){
   const al = TAB_ALIAS[tab];
   if(al){
     if(!keepSeg) state[al[1]] = al[2];
+    if(al[0]==='negocios' && !keepSeg) state.opFiltro = null;
     tab = al[0];
   }
   state.tab = tab; state.mode = 'tabs';
@@ -2743,7 +2744,7 @@ function switchTab(tab, keepSeg){
   render({resetScroll:true});
 }
 /* toque na tab bar: mantem o seletor interno (Leads/Contas, Reservas/Negocios) que o corretor ja usava */
-function tabTap(tab){ switchTab(tab, true); }
+function tabTap(tab){ switchTab(tab, false); }
 function goBack(){
   if(state.mode==='wizard'){ wizardBack(); return; }
   const s = state.stacks[state.tab];
@@ -2840,7 +2841,9 @@ function render(opts={}){
 
   const hideTab = state.mode==='wizard' || !!s.hideTab || s.full != null;
   $('tabbar').hidden = hideTab;
-  document.querySelectorAll('.tab-btn').forEach(b=>b.classList.toggle('active', b.dataset.tab===state.tab && !hideTab));
+  /* Clientes virou duas abas (Leads e Contas), mas por dentro continua uma pilha so' (segC) */
+  const abaAtiva = state.tab==='clientes' ? (state.segC==='contas' ? 'contas' : 'leads') : state.tab;
+  document.querySelectorAll('.tab-btn').forEach(b=>b.classList.toggle('active', b.dataset.tab===abaAtiva && !hideTab));
   renderSelBar(s);
   renderOverlays();
   renderAssistFab(s, hideTab);
@@ -3110,6 +3113,7 @@ function screenHome(){
           <span class="home-date">${hojeExtenso()}</span>
         </div>
         <button class="avatar-btn" onclick="avatarPickerOpen()" aria-label="Alterar foto de perfil">${avatar}<span class="badgecam">${I.camera}</span></button>
+        <button class="circ-btn plus" onclick="abrirAcoes()" aria-label="Nova ação">${I.plus}</button>
         <button class="circ-btn" onclick="doLogout()" aria-label="Sair / trocar de usuario">${I.logout}</button>
       </div>
       ${roletaCtl}
@@ -3256,10 +3260,6 @@ function screenClientesList(){
   contas = contas.map((c,i)=>({c,i})).sort((a,b)=>score(b.c)-score(a.c) || a.i-b.i).map(x=>x.c);
   const nAtivos = DB.leads.filter(leadEhAtivo).length;
   const topExtra = `
-    <div class="subtabs" role="tablist">
-      <button role="tab" aria-selected="${seg==='leads'}" class="${seg==='leads'?'on':''}" onclick="state.segC='leads'; render({resetScroll:true})">Leads<i>${nAtivos}</i></button>
-      <button role="tab" aria-selected="${seg==='contas'}" class="${seg==='contas'?'on':''}" onclick="state.segC='contas'; render({resetScroll:true})">Contas<i>${DB.clientes.length}</i></button>
-    </div>
     <div class="top-search">${I.search}<input id="clientesSearch" placeholder="${seg==='leads'?'Buscar lead por nome':'Buscar por nome ou CPF'}" value="${esc(qRaw)}" oninput="state.filters.clientesQuery=this.value; render()"></div>`;
   const nStatus = s => s==='ativos' ? leadsBusca.filter(leadEhAtivo).length : leadsBusca.filter(l=>l.status===s).length;
   const chips = seg==='leads' ? `
@@ -3275,7 +3275,7 @@ function screenClientesList(){
   const action = seg==='leads'
     ? `<button class="circ-btn" onclick="go('leadForm',{})" aria-label="Novo lead">${I.plus}</button>`
     : `<button class="circ-btn" onclick="go('clienteForm',{})" aria-label="Nova conta">${I.plus}</button>`;
-  return {title:'Clientes', back:false, action, topExtra, body};
+  return {title: seg==='leads' ? 'Leads' : 'Contas', back:false, action, topExtra, body};
 }
 
 /* ---------- LEAD ---------- */
@@ -3949,6 +3949,7 @@ function negocioCard(n){
         ${n.valor ? `<b style="font:700 16px var(--font-display); color:var(--charcoal-700); white-space:nowrap;">${mi(n.valor)}</b>` : ''}
       </span>
       ${idx>=0 ? segsHtml(idx, ESTAGIOS_NEGOCIO.length) : ''}
+      ${negocioReservaLinha(n)}
     </button>`;
 }
 function negocioStageTone(n){
@@ -3956,23 +3957,40 @@ function negocioStageTone(n){
   const idx = negocioEstagioIdx(n);
   return idx>=4 ? 'success' : 'sky';
 }
+/* reserva (CA_Reserva__c) ligada a uma oportunidade: mostra a alcada de desconto e leva para a reserva */
+function reservaDoNegocio(n){ return DB.reservas.find(r=>r.negociacaoId===n.id) || null; }
+function negocioReservaLinha(n){
+  const r = reservaDoNegocio(n);
+  if(!r) return '';
+  const a = r.aprovacao && r.aprovacao.status && r.aprovacao.status!=='nao_requer' ? AP_INFO[r.aprovacao.status] : null;
+  return `<span class="op-res" role="button" tabindex="0" onclick="event.stopPropagation(); go('resDetail',{id:'${r.id}'})">
+      <span>Reserva ${esc(r.status||'')}${a?` · desconto <b>${a[0].toLowerCase()}</b>`:''}</span><i>Ver reserva ${I.next}</i></span>`;
+}
+const OP_FILTROS = [['andamento','Em andamento'],['reservas','Reservas'],['ganhas','Ganhas'],['perdidas','Perdidas'],['todas','Todas']];
 function screenNegociosHub(){
-  const seg = state.segN === 'negocios' ? 'negocios' : 'reservas';
-  if(seg==='negocios' && !state.sfNegociosLoaded) sfCarregarNegocios();
-  const topExtra = `
-    <div class="seg">
-      <button class="${seg==='reservas'?'on':''}" onclick="state.segN='reservas'; render({resetScroll:true})">Reservas · ${DB.reservas.length}</button>
-      <button class="${seg==='negocios'?'on':''}" onclick="state.segN='negocios'; render({resetScroll:true})">Negócios · ${DB.negocios.length}</button>
+  if(!state.sfNegociosLoaded) sfCarregarNegocios();
+  const f = state.opFiltro || (state.segN==='reservas' ? 'reservas' : 'andamento');
+  const n = {
+    andamento: DB.negocios.filter(x=>!x.fechada).length,
+    reservas: DB.reservas.length,
+    ganhas: DB.negocios.filter(x=>x.fechada && x.ganha).length,
+    perdidas: DB.negocios.filter(x=>x.fechada && !x.ganha).length,
+    todas: DB.negocios.length
+  };
+  const chips = `<div class="chips-row" role="group" aria-label="Filtrar oportunidades">
+      ${OP_FILTROS.map(([k,l])=>`<button class="fchip ${f===k?'on':''}" onclick="state.opFiltro='${k}'; state.segN='${k==='reservas'?'reservas':'negocios'}'; render({resetScroll:true})">${l}<i>${n[k]}</i></button>`).join('')}
     </div>`;
-  let body;
-  if(seg==='reservas'){
-    body = DB.reservas.length ? DB.reservas.map(resCard).join('') : `<div class="empty">Nenhuma reserva ainda</div>`;
+  let lista;
+  if(f==='reservas'){
+    lista = DB.reservas.length ? DB.reservas.map(resCard).join('') : `<div class="empty">Nenhuma reserva ainda</div>`;
+  } else if(!state.sfNegociosLoaded){
+    lista = `<div class="sync-row" style="margin-top:20px;"><span class="spinner"></span> Carregando oportunidades...</div>`;
   } else {
-    body = !state.sfNegociosLoaded
-      ? `<div class="sync-row" style="margin-top:20px;"><span class="spinner"></span> Carregando negócios...</div>`
-      : DB.negocios.length ? DB.negocios.map(negocioCard).join('') : `<div class="empty">Nenhum negócio ainda</div>`;
+    const filtradas = DB.negocios.filter(x=> f==='andamento' ? !x.fechada : f==='ganhas' ? (x.fechada && x.ganha) : f==='perdidas' ? (x.fechada && !x.ganha) : true);
+    lista = filtradas.length ? filtradas.map(negocioCard).join('') : `<div class="empty">Nenhuma oportunidade neste filtro</div>`;
   }
-  return {title:'Negócios', back:false, topExtra, body, sheetClass:'tight'};
+  const action = `<button class="circ-btn" onclick="abrirAcoes()" aria-label="Nova ação">${I.plus}</button>`;
+  return {title:'Oportunidades', back:false, action, sub:'Reservas e negócios do seu funil', body: chips + lista, sheetClass:'tight'};
 }
 
 /* ---------- RESERVA ---------- */
