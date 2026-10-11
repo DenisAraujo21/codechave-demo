@@ -657,3 +657,30 @@ p{line-height:1.5;}
 .as-form input{flex:1; min-width:0; min-height:48px; border-radius:999px; border:1px solid var(--grey-300,#CBD1D5); padding:0 18px; font:inherit; background:#fff; color:var(--charcoal-700);}
 .as-form button{width:48px; height:48px; border-radius:50%; border:none; background:var(--charcoal-700); color:#fff; display:flex; align-items:center; justify-content:center; cursor:pointer; flex:0 0 auto;}
 .as-form button svg{width:20px; height:20px;}
+/* ---- Inicio do corretor: respiro no topo, status da roleta no cabecalho ---- */
+.top.home-top{padding:calc(env(safe-area-inset-top,0px) + 26px) 20px 50px; gap:20px;}
+.home-hello{flex:1; min-width:0; display:flex; flex-direction:column; gap:4px; padding-top:2px;}
+.home-hello b{font:700 28px/1.1 var(--font-display); letter-spacing:-.02em; color:#fff;}
+.home-date{font-size:12.5px; color:rgba(242,242,242,.65);}
+.top.home-top .avatar-btn{width:48px; height:48px; font-size:15px;}
+.top.home-top .avatar-btn .badgecam{width:22px; height:22px;}
+.home-roleta{background:rgba(255,255,255,.07); border-radius:18px; padding:12px 12px 12px 14px; display:flex; flex-direction:column; gap:10px;}
+.home-roleta-l{display:flex; align-items:center; gap:12px;}
+.home-roleta-l > span:last-child{display:flex; flex-direction:column; gap:1px;}
+.home-roleta-l b{font:700 14px var(--font-display); color:#fff;}
+.home-roleta-l small{font-size:11.5px; color:rgba(242,242,242,.65);}
+.home-seg button{display:flex; align-items:center; justify-content:center; gap:6px; height:36px; font-size:13px;}
+.home-seg button i{width:8px; height:8px; border-radius:50%; flex:none;}
+.live-dot.ld-away{background:var(--color-warning); box-shadow:0 0 0 4px rgba(230,167,0,.22);}
+.live-dot.ld-off{background:var(--grey-400); box-shadow:0 0 0 4px rgba(160,170,178,.2);}
+
+/* ajuste: cabecalho do Inicio mais compacto (a lista "Para hoje" precisa aparecer sem rolar) */
+.top.home-top{padding:calc(env(safe-area-inset-top,0px) + 22px) 20px 44px; gap:14px;}
+.home-roleta{flex-direction:row; align-items:center; justify-content:space-between; padding:6px 6px 6px 14px; gap:8px; border-radius:999px;}
+.home-roleta-l{gap:10px;}
+.home-roleta-l .live-dot{flex:none;}
+.home-seg{grid-auto-columns:auto; background:rgba(255,255,255,.08); padding:3px;}
+.home-seg button{height:34px; padding:0 12px; font-size:12.5px;}
+.top.home-top .stats-dark div{padding:10px 12px;}
+.top.home-top .stats-dark b{font-size:22px;}
+.as-txt{padding-right:40px;}
