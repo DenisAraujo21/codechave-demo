@@ -552,6 +552,7 @@ async function sfCarregarLeads(){
       cidade: l.cidade || null, midia: l.midia || null, corretorNome: l.corretorNome || null,
       celular: l.celular || null, cpf: l.cpf || null, midiaVisita: l.midiaVisita || null, perfil: l.perfil || null, tipoEntrada: l.tipoEntrada || null,
       obs: l.observacao || null, anotacoes: l.anotacoes || null, prazoPrimeiroContato: l.prazoPrimeiroContato || null,
+      estadoCivil: l.estadoCivil || null, profissao: l.profissao || null, renda: l.renda || null,
       telefoneInvalido: !!l.telefoneInvalido, emailInvalido: !!l.emailInvalido, motivoDescarte: l.motivoDescarte || null, estado: l.estado || null,
       roleta: true, chegouMin: sfMinutosAtras(l.criadoEm), real: true,
     }));
@@ -1093,6 +1094,11 @@ function screenLeadForm(params){
         </select>
       </div>
     </div>
+    <div class="field-row">
+      <div class="field"><label for="lf-ec">Estado civil</label><select id="lf-ec"><option value="">Não informado</option>${LEAD_ESTADOS_CIVIS.map(o=>`<option>${o}</option>`).join('')}</select></div>
+      <div class="field"><label for="lf-prof">Profissão</label><select id="lf-prof"><option value="">Não informado</option>${LEAD_PROFISSOES.map(o=>`<option>${o}</option>`).join('')}</select></div>
+    </div>
+    <div class="field"><label for="lf-renda">Renda mensal (R$)</label><input id="lf-renda" type="number" inputmode="decimal" min="0" step="0.01" placeholder="0,00"></div>
     <div class="field"><label for="lf-obs">Observacoes</label><textarea id="lf-obs" placeholder="Preferencias, orcamento, melhor horario de contato...">${lead?lead.obs||'':''}</textarea></div>
     <button class="btn btn-primary" onclick="saveLead()">${I.check} Salvar lead</button>
   `;
@@ -1108,13 +1114,16 @@ function saveLead(){
     origem: document.getElementById('lf-origem').value,
     interesse: document.getElementById('lf-emp').value,
     obs: document.getElementById('lf-obs').value.trim(),
+    estadoCivil: document.getElementById('lf-ec').value || null,
+    profissao: document.getElementById('lf-prof').value || null,
+    renda: Number(document.getElementById('lf-renda').value) || null,
   };
   const id = 'l'+(++seq);
   const novoLead = {id, status:'Novo', criado:sfDataCurta(new Date().toISOString()), ...data};
   DB.leads.unshift(novoLead);
   resetTabTo('clientesList');
   toast('Lead salvo - sincronizando com o Salesforce...');
-  sfApi('/leads', {method:'POST', body:JSON.stringify({nome:data.nome, telefone:data.telefone, email:data.email, origem:data.origem, empreendimentoId:data.interesse||null})})
+  sfApi('/leads', {method:'POST', body:JSON.stringify({nome:data.nome, telefone:data.telefone, email:data.email, origem:data.origem, empreendimentoId:data.interesse||null, estadoCivil:data.estadoCivil, profissao:data.profissao, renda:data.renda})})
     .then(res=>{
       /* troca o id local pelo id real - sem isso, mudar o caminho ou agendar visita nesse
        lead nunca sincroniza com o Salesforce (fica preso no fluxo mock pra sempre). */
@@ -1148,11 +1157,11 @@ function screenClienteForm(params){
     </div>
     <div class="field-row">
       <div class="field"><label for="cf-ecivil">Estado civil</label>
-        <select id="cf-ecivil">${['Solteiro(a)','Casado(a)','Divorciado(a)','Viuvo(a)','Uniao estavel'].map(o=>`<option>${o}</option>`).join('')}</select>
+        <select id="cf-ecivil">${LEAD_ESTADOS_CIVIS.map(o=>`<option ${lead&&lead.estadoCivil===o?'selected':''}>${o}</option>`).join('')}</select>
       </div>
-      <div class="field"><label for="cf-prof">Profissao</label><input id="cf-prof" placeholder="Ex: Engenheiro"></div>
+      <div class="field"><label for="cf-prof">Profissao</label><input id="cf-prof" placeholder="Ex: Engenheiro" value="${lead&&lead.profissao?esc(lead.profissao):''}"></div>
     </div>
-    <div class="field"><label for="cf-renda">Renda mensal (R$)</label><input id="cf-renda" type="number" placeholder="0,00"></div>
+    <div class="field"><label for="cf-renda">Renda mensal (R$)</label><input id="cf-renda" type="number" placeholder="0,00" value="${lead&&lead.renda?lead.renda:''}"></div>
     <div class="field-row">
       <div class="field" style="flex:2;"><label for="cf-logradouro">Logradouro</label><input id="cf-logradouro" placeholder="Rua, avenida..."></div>
       <div class="field"><label for="cf-numero">Numero</label><input id="cf-numero"></div>
@@ -2787,6 +2796,7 @@ function currentScreen(){
     case 'propostaResumo': return screenPropostaResumo();
     case 'assistente': return screenAssistente();
     case 'comparar': return screenComparar();
+    case 'leadPerfil': return screenLeadPerfil(top.params.id);
     default: return {title:'', back:false, body:''};
   }
 }
@@ -3293,9 +3303,13 @@ function screenLeadDetail(id){
       ['Corretor', l.corretorNome]
     ])}
     ${kvGrupo('Perfil', [
+      ['Estado civil', l.estadoCivil, true],
+      ['Profissão', l.profissao, true],
+      ['Renda mensal', l.renda ? brl(l.renda) : null, true],
       ['CPF', l.cpf],
       ['Perfil do cliente', l.perfil]
     ])}
+    <button class="link-btn" style="align-self:flex-start;" onclick="go('leadPerfil',{id:'${l.id}'})">Editar estado civil, profissão e renda</button>
     ${kvGrupo('Acompanhamento', [
       ['Criado', l.criado ? l.criado+'/2026' : null, true],
       ['Prazo do 1º contato', prazo]
@@ -4957,6 +4971,45 @@ function screenComparar(){
     ${carregandoTab ? `<div class="sync-row"><span class="spinner"></span> Carregando a tabela de vendas...</div>` : (!tabela ? `<p class="cmp-nota">Sem Tabela de Vendas vigente neste empreendimento: entrada e parcelas não aparecem.</p>` : `<p class="cmp-nota">Entrada e parcelas calculadas pela tabela “${esc(tabela.name||'')}”.</p>`)}
     <button class="btn btn-ghost btn-lg" style="width:100%;" onclick="cmpLimpar(); goBack()">Cancelar comparação</button>`;
   return {title:'Comparar unidades', back:true, hideTab:true, sub:esc(e ? e.nome : ''), body};
+}
+
+
+/* =====================================================================================
+   PERFIL FINANCEIRO DO LEAD: estado civil, profissao e renda mensal (campos CA_EstadoCivil__c,
+   CA_Profissao__c e CA_RendaMensal__c do Lead). Edita pelo PATCH /leads/{id}; na conversao em conta
+   o formulario ja vem preenchido com esses valores.
+   ===================================================================================== */
+const LEAD_ESTADOS_CIVIS = ['Solteiro(a)','Casado(a)','União Estável','Divorciado(a)','Viúvo(a)','Separado(a)','Casado(a) em regime de comunhão parcial de bens','Casado(a) em regime de comunhão total de bens','Casado(a) em regime de separação total de bens','Outros'];
+const LEAD_PROFISSOES = ['Empresário(a)','Executivo(a)','Médico(a)','Advogado(a)','Engenheiro(a)','Arquiteto(a)','Comerciante','Autônomo(a)','Servidor Público','Aposentado(a)','Investidor(a)','Outro'];
+
+function screenLeadPerfil(id){
+  const l = leadById(id);
+  if(!l) return {title:'Perfil do lead', back:true, hideTab:true, body:'<p class="muted">Lead não encontrado.</p>'};
+  const opcoes = (lista, atual) => ['<option value="">Não informado</option>']
+    .concat(lista.concat(atual && !lista.includes(atual) ? [atual] : []).map(o=>`<option value="${esc(o)}" ${atual===o?'selected':''}>${esc(o)}</option>`)).join('');
+  const body = `
+    <div class="field"><label for="lp-ec">Estado civil</label><select id="lp-ec">${opcoes(LEAD_ESTADOS_CIVIS, l.estadoCivil)}</select></div>
+    <div class="field"><label for="lp-prof">Profissão</label><select id="lp-prof">${opcoes(LEAD_PROFISSOES, l.profissao)}</select></div>
+    <div class="field"><label for="lp-renda">Renda mensal (R$)</label><input id="lp-renda" type="number" inputmode="decimal" min="0" step="0.01" value="${l.renda?l.renda:''}" placeholder="0,00"></div>
+    <button class="btn btn-primary btn-lg" id="lp-salvar" onclick="salvarLeadPerfil('${l.id}')">${I.check} Salvar perfil</button>`;
+  return {title:'Perfil do lead', back:true, hideTab:true, sub:esc(l.nome), body};
+}
+function salvarLeadPerfil(id){
+  const l = leadById(id); if(!l) return;
+  const ec = document.getElementById('lp-ec').value;
+  const prof = document.getElementById('lp-prof').value;
+  const rendaTxt = document.getElementById('lp-renda').value.trim();
+  const renda = rendaTxt === '' ? null : Number(rendaTxt);
+  if(renda !== null && (!isFinite(renda) || renda < 0)){ toast('Renda inválida'); return; }
+  const antes = {estadoCivil:l.estadoCivil, profissao:l.profissao, renda:l.renda};
+  Object.assign(l, {estadoCivil: ec || null, profissao: prof || null, renda: renda});
+  if(!l.real){ goBack(); toast('Perfil salvo'); return; }
+  const corpo = {estadoCivil: ec, profissao: prof};
+  if(renda === null) corpo.limparRenda = true; else corpo.renda = renda;
+  const btn = document.getElementById('lp-salvar'); if(btn){ btn.disabled = true; }
+  sfApi(`/leads/${id}`, {method:'PATCH', body:JSON.stringify(corpo)})
+    .then(()=>{ goBack(); toast('Perfil do lead salvo no Salesforce'); })
+    .catch(e=>{ Object.assign(l, antes); if(btn){ btn.disabled = false; } toast('Não foi possível salvar o perfil: '+e.message); });
 }
 
 
