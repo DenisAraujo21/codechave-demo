@@ -3174,7 +3174,6 @@ function screenHome(){
 
   const body = `
     ${blocoHoje}
-    ${cardAssistente()}
     ${blocoFila}
     ${blocoVisitas}
     ${blocoComissao}`;
@@ -4929,7 +4928,7 @@ function renderAssistFab(s, hideTab){
   const top = state.mode==='tabs' ? state.stacks[state.tab][state.stacks[state.tab].length-1].screen : null;
   const barraAberta = !!(selbar && selbar.innerHTML.trim());
   const naRaiz = state.mode==='tabs' && state.stacks[state.tab].length===1; // nas telas de detalhe o botao cobriria os dados
-  const mostrar = state.mode==='tabs' && !hideTab && top && top!=='home' && top!=='assistente' && !barraAberta && (naRaiz || top==='empDetail');
+  const mostrar = state.mode==='tabs' && !hideTab && top && top!=='assistente' && !barraAberta && (naRaiz || top==='empDetail');
   if(!mostrar){ if(fab) fab.remove(); return; }
   if(fab) return;
   fab = document.createElement('button');
