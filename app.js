@@ -1054,6 +1054,7 @@ function doLogout(){
   state.tab = 'home';
   state.stacks = { home:[{screen:'home'}], clientes:[{screen:'clientesList'}], empreendimentos:[{screen:'empList'}], negocios:[{screen:'negociosHub'}] };
   state.segC = 'leads'; state.segN = 'reservas'; state.contaTab = 'reservas'; state.negTab = 'resumo';
+  assistReset();
   state.sheet = null; state.docPick = null; state.present = null; state.wa = null; state.propPara = null;
   state.filters = { leadsQuery:'', contasQuery:'', clientesQuery:'', empQuery:'', unitFilter:'disponivel', unitSearch:'', comissaoFilter:'todas', torreAtivaPorEmp:{} };
   state.context = { preselectCliente:null };
@@ -2777,6 +2778,7 @@ function currentScreen(){
     case 'visitaForm': return screenVisitaForm();
     case 'comissoes': return screenComissoes();
     case 'propostaResumo': return screenPropostaResumo();
+    case 'assistente': return screenAssistente();
     default: return {title:'', back:false, body:''};
   }
 }
@@ -2823,6 +2825,7 @@ function render(opts={}){
   document.querySelectorAll('.tab-btn').forEach(b=>b.classList.toggle('active', b.dataset.tab===state.tab && !hideTab));
   renderSelBar(s);
   renderOverlays();
+  renderAssistFab(s, hideTab);
 
   if(activeId){
     const el = $(activeId);
@@ -3035,6 +3038,8 @@ function screenHome(){
             <span class="chev">${I.next}</span>
           </button>`).join('')}
       </div>` : `<div class="empty-ok">${I.checkc}<b style="font-size:13.5px; color:var(--charcoal-700);">Tudo em dia por aqui</b></div>`}
+
+    ${cardAssistente()}
 
     ${state.sfRoletaCadastrado ? `
       <div class="section-title">Meu status na roleta</div>
@@ -4654,6 +4659,102 @@ function excluirDocumentoReal(clienteId, tipoDocumento, contentDocumentId){
     });
   }, 5000);
   toast(snapshot.label+' excluído', ()=>{ desfeito = true; clearTimeout(timer); Object.assign(d, snapshot); render(); });
+}
+
+
+/* =====================================================================================
+   ASSISTENTE DO CORRETOR (Arti no CodeChave) - agente Agentforce de servico, so' consulta.
+   Fala com o Worker /api/corretor-agente mandando o token OAuth do proprio corretor; o Worker
+   confere o login no Salesforce e o agente so' enxerga os dados dele (leads, negocios, comissoes,
+   visitas e disponibilidade dos empreendimentos).
+   ===================================================================================== */
+const ASSIST_PROXY = 'https://buyercare-proxy.codeart-solutions.workers.dev';
+const ASSIST_SUGESTOES = [
+  'Quais leads novos estão sem contato?',
+  'Tenho desconto aguardando o gerente?',
+  'Quanto tenho de comissão a receber?',
+  'Quais visitas tenho agendadas?',
+  'O que tem disponível na Torre Verona?'
+];
+const ASSIST_BOAS_VINDAS = 'Oi! Eu sou o Arti. Posso te ajudar com seus leads, negócios, comissões, visitas e a disponibilidade dos empreendimentos. Eu só consulto: para criar ou alterar algo, use o app.';
+state.assist = state.assist || { msgs:[{from:'bot', text:ASSIST_BOAS_VINDAS}], enviando:false, rolar:false };
+
+function assistReset(){ state.assist = { msgs:[{from:'bot', text:ASSIST_BOAS_VINDAS}], enviando:false, rolar:false }; }
+function abrirAssistente(pergunta){
+  if(state.mode==='wizard') return;
+  go('assistente', {});
+  if(pergunta) perguntarAssistente(pergunta);
+}
+/* texto do agente -> HTML seguro (negrito simples e quebras de linha) */
+function assistHtml(t){
+  return esc(t).replace(/\*\*(.+?)\*\*/g,'<b>$1</b>').replace(/\n/g,'<br>');
+}
+function screenAssistente(){
+  const a = state.assist;
+  const bolhas = a.msgs.map(m=>`<div class="as-bolha ${m.from==='bot'?'bot':'user'}">${assistHtml(m.text)}</div>`).join('')
+    + (a.enviando ? `<div class="as-bolha bot" style="opacity:.7;">Consultando...</div>` : '');
+  const sug = ASSIST_SUGESTOES.map(s=>`<button onclick="perguntarAssistente('${s.replace(/'/g,"\\'")}')">${esc(s)}</button>`).join('');
+  const body = `
+    <p class="as-aviso">O Arti é um assistente com inteligência artificial e só consulta os seus dados. Confira valores importantes no app.</p>
+    <div class="as-lista">${bolhas}</div>
+    <div class="as-sug">${sug}</div>
+    <form class="as-form" onsubmit="enviarAssistente(event)">
+      <input id="asInput" autocomplete="off" maxlength="500" placeholder="Pergunte sobre seus leads, negócios..." ${a.enviando?'disabled':''}>
+      <button type="submit" aria-label="Enviar" ${a.enviando?'disabled':''}>${I.arrowR}</button>
+    </form>`;
+  setTimeout(()=>{ if(a.rolar){ a.rolar = false; const v = $('view'); if(v) v.scrollTop = v.scrollHeight; const i = $('asInput'); if(i && !i.disabled) i.focus({preventScroll:true}); } }, 0);
+  return {title:'Arti', back:true, hideTab:true, sub:'Assistente do corretor · IA', body};
+}
+function enviarAssistente(ev){
+  ev.preventDefault();
+  const i = $('asInput'); const t = i ? i.value.trim() : '';
+  if(!t || state.assist.enviando) return;
+  perguntarAssistente(t);
+}
+async function perguntarAssistente(texto){
+  const a = state.assist;
+  if(a.enviando) return;
+  const sess = sfSessionGet();
+  if(!sess || !sess.accessToken){ toast('Sessão expirada. Entre de novo.'); return; }
+  const historico = a.msgs.slice(-6).map(m=>({from:m.from, text:m.text}));
+  a.msgs.push({from:'user', text:texto});
+  a.enviando = true; a.rolar = true; render();
+  try{
+    const resp = await fetch(`${ASSIST_PROXY}/api/corretor-agente`, {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({accessToken: sess.accessToken, mensagem: texto, historico})
+    });
+    const dados = await resp.json().catch(()=>({}));
+    if(resp.ok && dados.resposta) a.msgs.push({from:'bot', text:dados.resposta});
+    else if(dados.sessaoExpirada) a.msgs.push({from:'bot', text:'Sua sessão do Salesforce expirou. Saia e entre de novo no app para eu consultar seus dados.'});
+    else a.msgs.push({from:'bot', text: dados.erro || 'Não consegui responder agora. Tente de novo em instantes.'});
+  }catch(e){
+    a.msgs.push({from:'bot', text:'Sem conexão com o servidor no momento. Tente novamente.'});
+  }
+  a.enviando = false; a.rolar = true; render();
+}
+/* cartao no Inicio (mesmo estilo compacto do CodeLar) */
+function cardAssistente(){
+  return `<button class="as-card" onclick="abrirAssistente()">
+    <span class="as-ring"></span>
+    <img src="assets/arti-ola.png" alt="">
+    <span class="as-txt"><b>Pergunte ao Arti <span class="as-tag">IA</span></b><span>Leads, negócios, comissões e visitas.</span></span>
+  </button>`;
+}
+/* botao flutuante nas outras abas (acima da tab bar); recolhe o texto depois de 5s */
+function renderAssistFab(s, hideTab){
+  const dev = $('device'); if(!dev) return;
+  let fab = $('asFab');
+  const top = state.mode==='tabs' ? state.stacks[state.tab][state.stacks[state.tab].length-1].screen : null;
+  const mostrar = state.mode==='tabs' && !hideTab && top && top!=='home' && top!=='assistente';
+  if(!mostrar){ if(fab) fab.remove(); return; }
+  if(fab) return;
+  fab = document.createElement('button');
+  fab.id = 'asFab'; fab.className = 'as-fab';
+  fab.setAttribute('aria-label','Pergunte ao Arti, assistente com inteligência artificial');
+  fab.onclick = () => abrirAssistente();
+  fab.innerHTML = `<span class="av"><img src="assets/arti-ola.png" alt=""><b>IA</b></span><span class="lb">Pergunte ao Arti</span>`;
+  dev.appendChild(fab);
 }
 
 
