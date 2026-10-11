@@ -752,3 +752,13 @@ p{line-height:1.5;}
 .com-nums i{font:600 11px var(--font-sans); font-style:normal; color:var(--grey-500);}
 .com-nums b{font:700 17px var(--font-display); color:var(--charcoal-700);}
 .com-nums small{font-size:11px; color:var(--grey-500);}
+/* ---- barra de 5 abas (Inicio, Leads, Oportunidades, Contas, Imoveis); o "+" foi para o topo ---- */
+.tabbar{grid-template-columns:repeat(5,1fr); padding:0 4px;}
+.tab-btn span{font-size:10px; letter-spacing:-.01em; white-space:nowrap;}
+.tab-plus{display:none;}
+.circ-btn.plus{background:var(--sun-500); color:var(--charcoal-700);}
+.op-res{display:flex; justify-content:space-between; align-items:center; gap:8px; margin-top:2px; padding:8px 10px; border-radius:12px; background:var(--grey-50); font-size:12px; color:var(--grey-600); text-align:left;}
+.op-res b{color:var(--charcoal-700); font-weight:600;}
+.op-res i{display:flex; align-items:center; gap:2px; font-style:normal; font-weight:600; color:var(--sky-700); white-space:nowrap;}
+.op-res i svg{width:14px; height:14px;}
+/* tab-btn-5 */
