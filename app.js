@@ -3010,17 +3010,27 @@ function screenHome(){
   const avatar = state.avatarFoto
     ? `<span class="pic" style="background-image:url('${state.avatarFoto}')"></span>`
     : `<span class="pic">${initials(state.sfUsuarioNomeCompleto || state.sfUsuarioNome || 'Corretor')}</span>`;
+  const roletaCls = ({Online:'on', Ausente:'away'})[state.sfRoletaStatus] || 'off';
+  const roletaCtl = state.sfRoletaCadastrado ? `
+        <div class="home-roleta">
+          <span class="home-roleta-l"><span class="live-dot ld-${roletaCls}"></span><span><b>Roleta</b></span></span>
+          <div class="seg home-seg">
+            ${[['Online','var(--color-success)'],['Ausente','var(--color-warning)'],['Offline','var(--grey-400)']].map(([k,c])=>
+              `<button class="${state.sfRoletaStatus===k?'on':''}" onclick="roletaStatusSet('${k}')"><i style="background:${c}"></i>${k}</button>`).join('')}
+          </div>
+        </div>` : '';
   const top = `
-    <div class="top" style="gap:18px;">
-      <div class="top-row" style="gap:12px;">
-        <div style="flex:1; min-width:0; display:flex; flex-direction:column; gap:3px;">
+    <div class="top home-top">
+      <div class="top-row" style="gap:12px; align-items:flex-start;">
+        <div class="home-hello">
           <span class="top-eyebrow">Bom te ver</span>
-          <b style="font:700 26px var(--font-display); letter-spacing:-.01em; color:#fff;">Olá, ${esc(state.sfUsuarioNome || 'Corretor(a)')}</b>
-          <span style="font-size:12.5px; color:rgba(242,242,242,.65);">${hojeExtenso()}</span>
+          <b>Olá, ${esc(state.sfUsuarioNome || 'Corretor(a)')}</b>
+          <span class="home-date">${hojeExtenso()}</span>
         </div>
         <button class="avatar-btn" onclick="avatarPickerOpen()" aria-label="Alterar foto de perfil">${avatar}<span class="badgecam">${I.camera}</span></button>
         <button class="circ-btn" onclick="doLogout()" aria-label="Sair / trocar de usuario">${I.logout}</button>
       </div>
+      ${roletaCtl}
       <div class="stats-dark">
         <div><b>${leadsHoje}</b><span>Leads hoje</span></div>
         <div><b>${emNegociacao}</b><span>Em negociação</span></div>
@@ -3040,13 +3050,6 @@ function screenHome(){
       </div>` : `<div class="empty-ok">${I.checkc}<b style="font-size:13.5px; color:var(--charcoal-700);">Tudo em dia por aqui</b></div>`}
 
     ${cardAssistente()}
-
-    ${state.sfRoletaCadastrado ? `
-      <div class="section-title">Meu status na roleta</div>
-      <div class="seg light">
-        ${[['Online','var(--color-success)'],['Ausente','var(--color-warning)'],['Offline','var(--grey-400)']].map(([k,c])=>
-          `<button class="${state.sfRoletaStatus===k?'on':''}" onclick="roletaStatusSet('${k}')"><i style="background:${c}"></i>${k}</button>`).join('')}
-      </div>` : ''}
 
     <div class="section-title big" style="margin-top:6px;">
       <span style="display:flex; align-items:center; gap:8px;"><span class="live-dot"></span>Leads da roleta · ${roleta.length}</span>
