@@ -684,3 +684,13 @@ p{line-height:1.5;}
 .top.home-top .stats-dark div{padding:10px 12px;}
 .top.home-top .stats-dark b{font-size:22px;}
 .as-txt{padding-right:40px;}
+
+/* foto de perfil proporcional ao bloco de texto da saudacao (eyebrow + nome + data ~ 76px) */
+.top.home-top .avatar-btn{width:68px; height:68px; font-size:22px;}
+.top.home-top .avatar-btn .badgecam{width:26px; height:26px; right:-2px; bottom:-2px;}
+.top.home-top .avatar-btn .badgecam svg{width:13px; height:13px;}
+.top.home-top .top-row{align-items:center !important;}
+/* mascote do cartao proporcional ao bloco de texto (titulo + linha de apoio) */
+.as-card{gap:12px; padding:10px 14px;}
+.as-card img{width:68px; height:68px;}
+.as-txt{padding-right:30px;}
