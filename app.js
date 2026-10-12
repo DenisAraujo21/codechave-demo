@@ -1154,9 +1154,10 @@ function screenClienteForm(params){
       <div class="field"><label for="cf-rg">RG</label><input id="cf-rg" placeholder="00.000.000-0"></div>
     </div>
     <div class="field-row">
-      <div class="field"><label for="cf-tel">Telefone</label><input id="cf-tel" value="${lead?lead.telefone:''}"></div>
-      <div class="field"><label for="cf-email">E-mail</label><input id="cf-email" type="email" value="${lead?lead.email:''}"></div>
+      <div class="field"><label for="cf-tel">Telefone</label><input id="cf-tel" value="${lead?esc(lead.telefone||''):''}"></div>
+      <div class="field"><label for="cf-cel">Celular</label><input id="cf-cel" value="${lead?esc(lead.celular||''):''}"></div>
     </div>
+    <div class="field"><label for="cf-email">E-mail</label><input id="cf-email" type="email" value="${lead?esc(lead.email||''):''}"></div>
     <div class="field-row">
       <div class="field"><label for="cf-ecivil">Estado civil</label>
         <select id="cf-ecivil">${LEAD_ESTADOS_CIVIS.map(o=>`<option ${lead&&lead.estadoCivil===o?'selected':''}>${o}</option>`).join('')}</select>
@@ -1173,11 +1174,11 @@ function screenClienteForm(params){
       <div class="field"><label for="cf-bairro">Bairro</label><input id="cf-bairro"></div>
     </div>
     <div class="field-row">
-      <div class="field" style="flex:2;"><label for="cf-cidade">Cidade</label><input id="cf-cidade"></div>
+      <div class="field" style="flex:2;"><label for="cf-cidade">Cidade</label><input id="cf-cidade" value="${lead&&lead.cidade?esc(lead.cidade):''}"></div>
       <div class="field"><label for="cf-estado">Estado</label>
         <select id="cf-estado">
           <option value="">-</option>
-          ${UF_BRASIL.map(uf=>`<option value="${uf}">${uf}</option>`).join('')}
+          ${UF_BRASIL.map(uf=>`<option value="${uf}" ${lead&&lead.estado===uf?'selected':''}>${uf}</option>`).join('')}
         </select>
       </div>
     </div>
@@ -1232,7 +1233,7 @@ function saveCliente(leadId){
      convertido de fato no Salesforce (IsConverted=true), nao so muda o texto do Status. */
   toast('Convertendo lead no Salesforce...');
   sfApi(`/leads/${leadId}/converter`, {method:'POST', body:JSON.stringify({
-    nome, cpf, telefone, email, rg, estadoCivil: estadoCivilCadastroParaPicklist(estadoCivil), profissao, renda,
+    nome, cpf, telefone, celular: (document.getElementById('cf-cel')||{value:''}).value.trim(), email, rg, estadoCivil: estadoCivilCadastroParaPicklist(estadoCivil), profissao, renda,
     logradouro, numero, complemento, bairro, cidade, estado, cep,
   })})
     .then(res=>{
