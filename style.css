@@ -800,3 +800,8 @@ p{line-height:1.5;}
 .funil-leg-r{font-size:14px; color:var(--charcoal-700);}
 .funil-leg-q{font:700 15px var(--font-display, inherit); color:var(--charcoal-700); display:inline-flex; align-items:baseline; gap:8px;}
 .funil-leg-q em{font:500 12px var(--font-body, inherit); font-style:normal; color:var(--grey-500);}
+
+/* ---- Inicio: o valor da comissao nao pode vazar do quadrado ---- */
+.top.home-top .stats-dark.kpis{grid-template-columns:minmax(0,.8fr) minmax(0,.9fr) minmax(0,1.5fr);}
+.stats-dark button b.kpi-money{color:var(--sun-500); font-size:clamp(17px,5.2vw,22px); letter-spacing:-.01em; max-width:100%;}
+.stats-dark button span{overflow-wrap:anywhere;}
