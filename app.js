@@ -3158,7 +3158,7 @@ function screenHome(){
       <div class="stats-dark kpis">
         <button onclick="irLeadsFiltro('Novo')"><b>${novos}</b><span>Leads novos</span></button>
         <button onclick="switchTab('negocios')"><b>${opAbertas==null?'—':opAbertas}</b><span>Oportunidades</span></button>
-        <button onclick="go('comissoes',{}); sfCarregarComissoes()"><b style="color:var(--sun-500);">${com?moedaCurta(com.aReceber):'—'}</b><span>Comissão a receber</span></button>
+        <button onclick="go('comissoes',{}); sfCarregarComissoes()"><b class="kpi-money">${com?moedaCurta(com.aReceber):'—'}</b><span>Comissão a receber</span></button>
       </div>
       <button class="funil-link" onclick="go('funil',{})">Ver meu funil ${I.next}</button>
     </div>`;
