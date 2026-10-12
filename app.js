@@ -622,6 +622,8 @@ async function sfCarregarContaDetalhe(id){
       dataExpedicaoRG: d.dataExpedicaoRG || null, orgaoEmissor: d.orgaoEmissor || null,
       genero: d.genero || null, documento: d.documento || null, pessoaEstrangeira: d.pessoaEstrangeira || null,
       conjugeId: d.conjugeId || null, conjugeNome: d.conjugeNome || null,
+      celular: d.celular || null, observacoes: d.observacoes || null, origemLead: d.origemLead || null, midiaImpactada: d.midiaImpactada || null,
+      midiaVisita: d.midiaVisita || null, tipoEntradaLead: d.tipoEntradaLead || null, perfilCliente: d.perfilCliente || null, anotacoesLead: d.anotacoesLead || null,
       negociacaoAbertaId: d.negociacaoAbertaId || null,
       negociacaoAbertaStage: d.negociacaoAbertaStage || null,
       negociacaoAbertaUnidade: d.negociacaoAbertaUnidade || null,
@@ -1437,7 +1439,7 @@ function estadoCivilFinal(base, tipoUniao){
    conjuge...), senao o render() reconstroi o HTML a partir do state antigo e apaga o que o
    corretor ja tinha digitado nos outros campos (mesmo bug de perda de foco/digitacao ja visto
    no wizard de parcelas - ver onWizardParcelasInput). */
-const CONTA_EDIT_TEXT_FIELDS = ['rg','telefone','email','profissao','renda','naturalidade','dataNascimento','nomeMae','nomePai','dataExpedicaoRG','orgaoEmissor','documento','tipoLogradouro','logradouro','numero','complemento','bairro','cidade','estado','cep','genero','pessoaEstrangeira'];
+const CONTA_EDIT_TEXT_FIELDS = ['nome','cpf','celular','observacoes','origemLead','midiaImpactada','midiaVisita','tipoEntradaLead','perfilCliente','anotacoesLead','rg','telefone','email','profissao','renda','naturalidade','dataNascimento','nomeMae','nomePai','dataExpedicaoRG','orgaoEmissor','documento','tipoLogradouro','logradouro','numero','complemento','bairro','cidade','estado','cep','genero','pessoaEstrangeira'];
 function captureContaEditForm(){
   const ce = state.contaEdit;
   if(!ce) return;
@@ -1507,6 +1509,12 @@ function screenContaEditar(id){
     const estadoCivilAtual = (raw && raw.estadoCivil) || (c.estadoCivil!=='-' ? c.estadoCivil : '');
     state.contaEdit = {
       id, seeded: !!raw || !c.real, touched: false,
+      nome: (raw && raw.nome) || (c.nome && c.nome!=='(sem nome)' ? c.nome : '') || '',
+      cpf: (raw && raw.cpf) || (c.cpf && c.cpf!=='-' ? c.cpf : '') || '',
+      celular: (raw && raw.celular) || c.celular || '',
+      observacoes: (raw && raw.observacoes) || c.observacoes || '',
+      origemLead: (raw && raw.origemLead) || '', midiaImpactada: (raw && raw.midiaImpactada) || '', midiaVisita: (raw && raw.midiaVisita) || '',
+      tipoEntradaLead: (raw && raw.tipoEntradaLead) || '', perfilCliente: (raw && raw.perfilCliente) || '', anotacoesLead: (raw && raw.anotacoesLead) || '',
       rg: (raw && raw.rg) || (c.rg && c.rg!=='-' ? c.rg : '') || '',
       telefone: (raw && raw.telefone) || c.telefone || '',
       email: (raw && raw.email) || c.email || '',
@@ -1581,7 +1589,11 @@ function screenContaEditar(id){
       </div>
     </div>
 
-    <div class="section-title" style="margin-top:0;">Documento e nascimento</div>
+    <div class="section-title" style="margin-top:0;">Identificação</div>
+    <div class="field"><label for="ce-nome">Nome completo</label><input id="ce-nome" value="${esc(ce.nome)}"></div>
+    <div class="field"><label for="ce-cpf">CPF</label><input id="ce-cpf" inputmode="numeric" value="${esc(ce.cpf)}" placeholder="000.000.000-00"></div>
+
+    <div class="section-title">Documento e nascimento</div>
     <div class="field-row">
       <div class="field"><label for="ce-rg">RG</label><input id="ce-rg" value="${ce.rg}" placeholder="00.000.000-0"></div>
       <div class="field"><label for="ce-orgaoemissor">Orgao emissor</label><input id="ce-orgaoemissor" value="${ce.orgaoEmissor}" placeholder="Ex: SSP/SP"></div>
@@ -1612,8 +1624,9 @@ function screenContaEditar(id){
     <div class="section-title">Contato e perfil</div>
     <div class="field-row">
       <div class="field"><label for="ce-telefone">Telefone</label><input id="ce-telefone" value="${ce.telefone}"></div>
-      <div class="field"><label for="ce-email">E-mail</label><input id="ce-email" type="email" value="${ce.email}"></div>
+      <div class="field"><label for="ce-celular">Celular</label><input id="ce-celular" value="${esc(ce.celular)}"></div>
     </div>
+    <div class="field"><label for="ce-email">E-mail</label><input id="ce-email" type="email" value="${ce.email}"></div>
     <div class="field-row">
       <div class="field"><label for="ce-profissao">Profissao</label><input id="ce-profissao" value="${ce.profissao}"></div>
       <div class="field"><label for="ce-renda">Renda mensal (R$)</label><input id="ce-renda" type="number" value="${ce.renda}"></div>
@@ -1659,6 +1672,20 @@ function screenContaEditar(id){
       </div>
     </div>
 
+    <div class="section-title">Origem do lead</div>
+    <div class="field-row">
+      <div class="field"><label for="ce-origemlead">Origem</label><select id="ce-origemlead">${optsLista(LEAD_ORIGENS, ce.origemLead)}</select></div>
+      <div class="field"><label for="ce-tipoentradalead">Tipo de entrada</label><select id="ce-tipoentradalead">${optsLista(LEAD_TIPOS_ENTRADA, ce.tipoEntradaLead)}</select></div>
+    </div>
+    <div class="field-row">
+      <div class="field"><label for="ce-midiaimpactada">Mídia impactada</label><select id="ce-midiaimpactada">${optsLista(LEAD_MIDIAS, ce.midiaImpactada)}</select></div>
+      <div class="field"><label for="ce-midiavisita">Mídia da visita</label><select id="ce-midiavisita">${optsLista(LEAD_MIDIAS_VISITA, ce.midiaVisita)}</select></div>
+    </div>
+    <div class="field"><label for="ce-perfilcliente">Perfil do cliente</label><input id="ce-perfilcliente" value="${esc(ce.perfilCliente)}"></div>
+    <div class="section-title">Observações</div>
+    <div class="field"><label for="ce-observacoes">Observações</label><textarea id="ce-observacoes" rows="3">${esc(ce.observacoes)}</textarea></div>
+    <div class="field"><label for="ce-anotacoeslead">Anotações do lead</label><textarea id="ce-anotacoeslead" rows="3">${esc(ce.anotacoesLead)}</textarea></div>
+
     <button class="btn btn-primary" style="margin-top:8px;" ${ce.saving?'disabled':''} onclick="salvarContaEditar()">${ce.saving?'Salvando...':`${I.check} Salvar conta`}</button>
   `;
   return {title:'Editar conta', back:true, body};
@@ -1687,6 +1714,9 @@ function salvarContaEditar(){
   }
 
   const payload = {
+    nome: ce.nome, cpf: ce.cpf, celular: ce.celular, observacoes: ce.observacoes,
+    origemLead: ce.origemLead, midiaImpactada: ce.midiaImpactada, midiaVisita: ce.midiaVisita,
+    tipoEntradaLead: ce.tipoEntradaLead, perfilCliente: ce.perfilCliente, anotacoesLead: ce.anotacoesLead,
     rg: ce.rg, telefone: ce.telefone, email: ce.email, estadoCivil: estadoCivilFinalValor,
     profissao: ce.profissao, renda: Number(ce.renda)||null,
     naturalidade: ce.naturalidade, dataNascimento: ce.dataNascimento||null,
@@ -1705,6 +1735,9 @@ function salvarContaEditar(){
   sfApi(`/contas/${ce.id}`, {method:'PATCH', body:JSON.stringify(payload)})
     .then(d=>{
       Object.assign(c, {
+        nome: d.nome||c.nome, cpf: d.cpf||'-', celular: d.celular||null, observacoes: d.observacoes||null,
+        origemLead: d.origemLead||null, midiaImpactada: d.midiaImpactada||null, midiaVisita: d.midiaVisita||null,
+        tipoEntradaLead: d.tipoEntradaLead||null, perfilCliente: d.perfilCliente||null, anotacoesLead: d.anotacoesLead||null,
         rg: d.rg||'-', telefone: d.telefone||'', email: d.email||'', estadoCivil: d.estadoCivil||'-',
         profissao: d.profissao||'-', renda: d.renda||0,
         naturalidade: d.naturalidade||null, dataNascimento: d.dataNascimento||null,
@@ -2798,6 +2831,7 @@ function currentScreen(){
     case 'assistente': return screenAssistente();
     case 'comparar': return screenComparar();
     case 'leadPerfil': return screenLeadPerfil(top.params.id);
+    case 'leadEditar': return screenLeadEditar(top.params.id);
     default: return {title:'', back:false, body:''};
   }
 }
@@ -3341,7 +3375,7 @@ function screenLeadDetail(id){
   const visita = leadVisita(id);
   const top = `
     <div class="top">
-      <div class="top-row"><button class="circ-btn" onclick="goBack()" aria-label="Voltar">${I.back}</button><span class="top-eyebrow">Lead</span></div>
+      <div class="top-row"><button class="circ-btn" onclick="goBack()" aria-label="Voltar">${I.back}</button><span class="top-eyebrow">Lead</span><div class="top-actions"><button class="circ-btn" onclick="go('leadEditar',{id:'${l.id}'})" aria-label="Editar lead">${I.edit}</button></div></div>
       <div class="id-row">
         <span class="id-avatar">${initials(l.nome)}</span>
         <div style="min-width:0;"><h1 class="id-name">${esc(l.nome)}</h1><span class="id-sub">${esc(l.origem)} · criado ${esc(l.criado)}</span></div>
@@ -3379,7 +3413,7 @@ function screenLeadDetail(id){
       ['CPF', l.cpf],
       ['Perfil do cliente', l.perfil]
     ])}
-    <button class="link-btn" style="align-self:flex-start;" onclick="go('leadPerfil',{id:'${l.id}'})">Editar estado civil, profissão e renda</button>
+    <button class="link-btn" style="align-self:flex-start;" onclick="go('leadEditar',{id:'${l.id}'})">Editar dados do lead</button>
     ${kvGrupo('Acompanhamento', [
       ['Criado', l.criado ? l.criado+'/2026' : null, true],
       ['Prazo do 1º contato', prazo]
@@ -3449,12 +3483,15 @@ function screenClienteDetail(id){
     const linhaCid = [en.bairro, [en.cidade, en.estado].filter(Boolean).join('/')].filter(Boolean).join(' · ');
     const casado = (c.estadoCivil||'').startsWith('Casado') || (c.estadoCivil||'')==='União Estável';
     const grupos = [
-      kvGrupo('Contato', [['Telefone', c.telefone, true], ['E-mail', c.email, true]]),
+      kvGrupo('Contato', [['Telefone', c.telefone, true], ['Celular', c.celular], ['E-mail', c.email, true]]),
       kvGrupo('Documentos', [['CPF', c.cpf], ['RG', c.rg], ['Órgão emissor', c.orgaoEmissor], ['Expedição do RG', c.dataExpedicaoRG ? fmtDataBR(c.dataExpedicaoRG) : null], ['Documento', c.documento]]),
       kvGrupo('Dados pessoais', [['Nascimento', c.dataNascimento ? fmtDataBR(c.dataNascimento) : null], ['Gênero', c.genero], ['Naturalidade', c.naturalidade], ['Estado civil', c.estadoCivil, true], ['Cônjuge', casado ? c.conjugeNome : null], ['Nome da mãe', c.nomeMae], ['Nome do pai', c.nomePai]]),
       kvGrupo('Profissão e renda', [['Profissão', c.profissao, true], ['Renda mensal', c.renda ? brl(c.renda) : null, true]]),
       kvGrupo('Endereço', [['Logradouro', linhaEnd], ['Bairro / cidade', linhaCid], ['CEP', en.cep]]),
-      kvGrupo('Interesse', [['Empreendimento de interesse', c.empreendimentoInteresseNome]])
+      kvGrupo('Interesse', [['Empreendimento de interesse', c.empreendimentoInteresseNome]]),
+      kvGrupo('Origem do lead', [['Origem', c.origemLead], ['Mídia impactada', c.midiaImpactada], ['Mídia da visita', c.midiaVisita], ['Tipo de entrada', c.tipoEntradaLead], ['Perfil do cliente', c.perfilCliente]]),
+      c.observacoes ? `<div class="section-title">Observações</div><p class="muted" style="font-size:13.5px; margin:0 4px; line-height:1.5; white-space:pre-line;">${esc(c.observacoes)}</p>` : '',
+      c.anotacoesLead ? `<div class="section-title">Anotações do lead</div><p class="muted" style="font-size:13.5px; margin:0 4px; line-height:1.5; white-space:pre-line;">${esc(c.anotacoesLead)}</p>` : ''
     ].join('');
     panel = `
       ${cards.length ? cards.join('') : `<div class="empty">Nenhuma reserva ainda</div>`}
@@ -5099,6 +5136,94 @@ function salvarLeadPerfil(id){
   sfApi(`/leads/${id}`, {method:'PATCH', body:JSON.stringify(corpo)})
     .then(()=>{ goBack(); toast('Perfil do lead salvo no Salesforce'); })
     .catch(e=>{ Object.assign(l, antes); if(btn){ btn.disabled = false; } toast('Não foi possível salvar o perfil: '+e.message); });
+}
+
+
+/* =====================================================================================
+   EDITAR LEAD: todos os campos do lead (mesmos da tela de detalhe) -> PATCH /leads/{id}.
+   Os valores das listas sao os da picklist real do Salesforce (o que nao estiver na lista,
+   mas ja estiver gravado, continua aparecendo como opcao para nao perder o dado).
+   ===================================================================================== */
+const LEAD_ORIGENS = ['Advertisement','Customer Event','Employee Referral','External Referral','Google AdWords','Other','Partner','Purchased List','Trade Show','Webinar','Website','Digital','Indicação'];
+const LEAD_MIDIAS = ['Facebook','Outdoor','Instagram','Website','Indicação','Rádio','Televisão'];
+const LEAD_MIDIAS_VISITA = ['Visita espontânea','Corretor','Evento','Digital'];
+const LEAD_TIPOS_ENTRADA = ['Formulário','Stand','Manual','Importação'];
+function optsLista(lista, atual, vazio){
+  const base = lista.concat(atual && !lista.includes(atual) ? [atual] : []);
+  return (vazio===false ? '' : `<option value="">${vazio||'Não informado'}</option>`)
+    + base.map(o=>`<option value="${esc(o)}" ${atual===o?'selected':''}>${esc(o)}</option>`).join('');
+}
+function screenLeadEditar(id){
+  const l = leadById(id);
+  if(!l) return {title:'Editar lead', back:true, hideTab:true, body:'<p class="muted">Lead não encontrado.</p>'};
+  const v = x => esc(x==null?'':x);
+  const origemAtual = l.origem && l.origem!=='-' ? l.origem : '';
+  const body = `
+    <div class="section-title" style="margin-top:0;">Contato</div>
+    <div class="field"><label for="le-nome">Nome completo</label><input id="le-nome" value="${v(l.nome)}"></div>
+    <div class="field-row">
+      <div class="field"><label for="le-tel">Telefone</label><input id="le-tel" inputmode="tel" value="${v(l.telefone)}" placeholder="(41) 3333-0000"></div>
+      <div class="field"><label for="le-cel">Celular</label><input id="le-cel" inputmode="tel" value="${v(l.celular)}" placeholder="(41) 99999-0000"></div>
+    </div>
+    <div class="field"><label for="le-email">E-mail</label><input id="le-email" type="email" value="${v(l.email)}" placeholder="nome@email.com"></div>
+    <div class="field"><label for="le-cidade">Cidade onde reside</label><input id="le-cidade" value="${v(l.cidade)}"></div>
+
+    <div class="section-title">Origem e interesse</div>
+    <div class="field-row">
+      <div class="field"><label for="le-origem">Origem</label><select id="le-origem">${optsLista(LEAD_ORIGENS, origemAtual)}</select></div>
+      <div class="field"><label for="le-tipo">Tipo de entrada</label><select id="le-tipo">${optsLista(LEAD_TIPOS_ENTRADA, l.tipoEntrada)}</select></div>
+    </div>
+    <div class="field-row">
+      <div class="field"><label for="le-midia">Mídia impactada</label><select id="le-midia">${optsLista(LEAD_MIDIAS, l.midia)}</select></div>
+      <div class="field"><label for="le-midiavisita">Mídia da visita</label><select id="le-midiavisita">${optsLista(LEAD_MIDIAS_VISITA, l.midiaVisita)}</select></div>
+    </div>
+    <div class="field"><label for="le-emp">Empreendimento de interesse</label>
+      <select id="le-emp"><option value="">Não informado</option>${DB.emps.map(e=>`<option value="${e.id}" ${l.interesse===e.id?'selected':''}>${esc(e.nome)}</option>`).join('')}</select>
+    </div>
+
+    <div class="section-title">Perfil</div>
+    <div class="field-row">
+      <div class="field"><label for="le-ec">Estado civil</label><select id="le-ec">${optsLista(LEAD_ESTADOS_CIVIS, l.estadoCivil)}</select></div>
+      <div class="field"><label for="le-prof">Profissão</label><select id="le-prof">${optsLista(LEAD_PROFISSOES, l.profissao)}</select></div>
+    </div>
+    <div class="field-row">
+      <div class="field"><label for="le-renda">Renda mensal (R$)</label><input id="le-renda" type="number" inputmode="decimal" min="0" step="0.01" value="${l.renda?l.renda:''}" placeholder="0,00"></div>
+      <div class="field"><label for="le-cpf">CPF</label><input id="le-cpf" inputmode="numeric" value="${v(l.cpf)}" placeholder="000.000.000-00"></div>
+    </div>
+    <div class="field"><label for="le-perfil">Perfil do cliente</label><input id="le-perfil" value="${v(l.perfil)}" placeholder="Ex: Investidor, moradia, primeiro imóvel"></div>
+
+    <div class="section-title">Observações</div>
+    <div class="field"><label for="le-obs">Observações</label><textarea id="le-obs" rows="3">${v(l.obs)}</textarea></div>
+    <div class="field"><label for="le-anot">Anotações</label><textarea id="le-anot" rows="3">${v(l.anotacoes)}</textarea></div>
+    <button class="btn btn-primary btn-lg" id="le-salvar" onclick="salvarLeadEditar('${l.id}')">${I.check} Salvar lead</button>`;
+  return {title:'Editar lead', back:true, hideTab:true, sub:esc(l.nome), body};
+}
+function salvarLeadEditar(id){
+  const l = leadById(id); if(!l) return;
+  const val = k => document.getElementById(k).value.trim();
+  const nome = val('le-nome');
+  if(!nome){ toast('Informe o nome do lead'); return; }
+  const rendaTxt = val('le-renda');
+  const renda = rendaTxt === '' ? null : Number(rendaTxt);
+  if(renda !== null && (!isFinite(renda) || renda < 0)){ toast('Renda inválida'); return; }
+  const dados = {
+    nome, telefone: val('le-tel'), celular: val('le-cel'), email: val('le-email'), cidade: val('le-cidade'),
+    origem: val('le-origem'), tipoEntrada: val('le-tipo'), midia: val('le-midia'), midiaVisita: val('le-midiavisita'),
+    empreendimentoId: val('le-emp'), estadoCivil: val('le-ec'), profissao: val('le-prof'),
+    cpf: val('le-cpf'), perfil: val('le-perfil'), observacao: val('le-obs'), anotacoes: val('le-anot')
+  };
+  if(renda === null) dados.limparRenda = true; else dados.renda = renda;
+  if(!l.real){
+    Object.assign(l, {nome, telefone:dados.telefone, celular:dados.celular||null, email:dados.email, cidade:dados.cidade||null,
+      origem:dados.origem||'-', tipoEntrada:dados.tipoEntrada||null, midia:dados.midia||null, midiaVisita:dados.midiaVisita||null,
+      interesse:dados.empreendimentoId||null, estadoCivil:dados.estadoCivil||null, profissao:dados.profissao||null, renda,
+      cpf:dados.cpf||null, perfil:dados.perfil||null, obs:dados.observacao||null, anotacoes:dados.anotacoes||null});
+    goBack(); toast('Lead salvo'); return;
+  }
+  const btn = document.getElementById('le-salvar'); if(btn){ btn.disabled = true; }
+  sfApi(`/leads/${id}`, {method:'PATCH', body:JSON.stringify(dados)})
+    .then(()=>{ goBack(); toast('Lead atualizado no Salesforce'); sfCarregarLeads(); })
+    .catch(e=>{ if(btn){ btn.disabled = false; } toast('Não foi possível salvar o lead: '+e.message); });
 }
 
 
