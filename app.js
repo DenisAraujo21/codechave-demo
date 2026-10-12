@@ -252,6 +252,8 @@ function sfRedirectUri(){
 }
 const SF_CONFIG = {
   loginUrl: 'https://co1781648434036.my.salesforce.com',
+  /* portal do corretor parceiro (Experience Cloud, licenca Partner Community): o login e a API passam pelo dominio do site */
+  portalUrl: 'https://co1781648434036.my.site.com/corretoresvforcesite',
   clientId: '3MVG9dAEux2v1sLuAlDQle4aL3TVKNC79C8BAYZcmy1XpTHrpbOKphEVGvgdNFbKpnWkDsAzmfZMXB0CkJ4Pc',
   redirectUri: sfRedirectUri(),
   apiPath: '/services/apexrest/codechave/v1',
@@ -288,12 +290,13 @@ function sfSessaoExpirada(){
    extra - e o padrao que a Salesforce documenta pra apps 100% client-side como este.
    Troca consciente: sem PKCE e sem refresh_token (a sessao expira e o corretor loga de novo) -
    aceitavel pra um demo, nao recomendado pra producao com muitos usuarios. */
-function sfStartLogin(){
+function sfStartLogin(modo){
   const params = new URLSearchParams({
     response_type:'token', client_id: SF_CONFIG.clientId, redirect_uri: SF_CONFIG.redirectUri,
     scope:'api',
   });
-  window.location.href = `${SF_CONFIG.loginUrl}/services/oauth2/authorize?${params.toString()}`;
+  const base = modo==='parceiro' ? SF_CONFIG.portalUrl : SF_CONFIG.loginUrl;
+  window.location.href = `${base}/services/oauth2/authorize?${params.toString()}`;
 }
 /* chamado uma vez no boot do app - se a URL voltou com #access_token=...&instance_url=...
    (redirect do Salesforce depois do login), le direto do fragmento, sem chamada de rede */
@@ -1018,10 +1021,10 @@ function resetTabTo(screen, params={}){ state.stacks[state.tab] = [{screen, para
 /* tela principal de cada aba - usada pra "resetar" a aba sempre que o corretor toca no
    botao dela na tab bar (ver switchTab) */
 
-function doLogin(){
+function doLogin(modo){
   state.loginLoading = true;
   render();
-  sfStartLogin(); // redireciona pro Salesforce (OAuth); a volta e tratada por sfHandleOAuthRedirect no boot
+  sfStartLogin(modo); // redireciona pro Salesforce (OAuth); a volta e tratada por sfHandleOAuthRedirect no boot
 }
 /* logout - pra testar entrando com outro usuario sem precisar recarregar a pagina inteira.
    volta pra tela de login e reseta a navegacao de cada aba pro topo (mesmo formato do
@@ -2982,7 +2985,8 @@ function screenLoginBody(){
       <div class="login-actions">
         ${state.loginLoading
           ? `<div class="login-load"><span class="spinner" style="border-color:rgba(255,255,255,.2); border-top-color:var(--sky-500); width:16px; height:16px;"></span>Conectando à sua org Salesforce…</div>`
-          : `<button class="btn btn-lg btn-accent" onclick="doLogin()">Entrar com Salesforce ${I.arrowR}</button>`}
+          : `<button class="btn btn-lg btn-accent" onclick="doLogin('parceiro')">Sou corretor parceiro ${I.arrowR}</button>
+             <button class="btn btn-lg login-sec" onclick="doLogin()">Entrar com Salesforce (equipe interna)</button>`}
         <div class="login-footer">Ambiente: Produção · v0.1</div>
       </div>
     </div>`;
