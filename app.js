@@ -4035,8 +4035,7 @@ function screenNegociosHub(){
     const filtradas = DB.negocios.filter(x=> f==='andamento' ? !x.fechada : f==='ganhas' ? (x.fechada && x.ganha) : f==='perdidas' ? (x.fechada && !x.ganha) : true);
     lista = filtradas.length ? filtradas.map(negocioCard).join('') : `<div class="empty">Nenhuma oportunidade neste filtro</div>`;
   }
-  const action = `<button class="circ-btn" onclick="abrirAcoes()" aria-label="Nova ação">${I.plus}</button>`;
-  return {title:'Oportunidades', back:false, action, sub:'Reservas e negócios do seu funil', body: chips + lista, sheetClass:'tight'};
+  return {title:'Oportunidades', back:false, sub:'Reservas e negócios do seu funil', body: chips + lista, sheetClass:'tight'};
 }
 
 /* ---------- RESERVA ---------- */
