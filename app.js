@@ -4957,7 +4957,7 @@ async function perguntarAssistente(texto){
   try{
     const resp = await fetch(`${ASSIST_PROXY}/api/corretor-agente`, {
       method:'POST', headers:{'Content-Type':'application/json'},
-      body: JSON.stringify({accessToken: sess.accessToken, mensagem: texto, historico})
+      body: JSON.stringify({accessToken: sess.accessToken, instanceUrl: sess.instanceUrl, mensagem: texto, historico})
     });
     const dados = await resp.json().catch(()=>({}));
     if(resp.ok && dados.resposta) a.msgs.push({from:'bot', text:dados.resposta});
