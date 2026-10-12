@@ -790,3 +790,13 @@ p{line-height:1.5;}
 .funil-mini b{font:700 20px var(--font-display, inherit); color:var(--charcoal-700);}
 .funil-mini span{font-size:12.5px; color:var(--grey-600);}
 .funil-mini i{font-style:normal; font-size:12px; color:var(--grey-500);}
+/* ---- Meu funil: pizza das oportunidades ---- */
+.funil-pizza-card{padding:16px 14px; gap:14px; align-items:stretch;}
+.funil-pizza{display:block; width:min(220px,64%); height:auto; margin:0 auto;}
+.funil-pizza-n{font:700 15px var(--font-display, inherit); fill:#fff; pointer-events:none;}
+.funil-legenda{display:flex; flex-direction:column;}
+.funil-leg{display:grid; grid-template-columns:auto minmax(0,1fr) auto; align-items:center; gap:10px; padding:9px 2px; background:transparent; border:0; border-top:1px solid var(--grey-100); text-align:left; cursor:pointer; width:100%;}
+.funil-leg i{width:12px; height:12px; border-radius:3px; display:block;}
+.funil-leg-r{font-size:14px; color:var(--charcoal-700);}
+.funil-leg-q{font:700 15px var(--font-display, inherit); color:var(--charcoal-700); display:inline-flex; align-items:baseline; gap:8px;}
+.funil-leg-q em{font:500 12px var(--font-body, inherit); font-style:normal; color:var(--grey-500);}
