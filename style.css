@@ -805,3 +805,5 @@ p{line-height:1.5;}
 .top.home-top .stats-dark.kpis{grid-template-columns:minmax(0,.78fr) minmax(0,1.1fr) minmax(0,1.42fr);}
 .stats-dark button b.kpi-money{color:var(--sun-500); font-size:clamp(17px,5.2vw,22px); letter-spacing:-.01em; max-width:100%;}
 .top.home-top .stats-dark button span{overflow-wrap:normal; word-break:normal; font-size:11px;}
+/* login: segundo acesso (equipe interna) discreto */
+.login-actions .login-sec{background:transparent; border:1px solid rgba(255,255,255,.28); color:rgba(255,255,255,.9); margin-top:10px; font-size:14px;}
