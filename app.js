@@ -322,6 +322,7 @@ async function sfCarregarUsuario(){
     state.sfUsuarioNomeCompleto = info.nome || state.sfUsuarioNome;
     state.sfUsuarioId = info.id || null;
     state.avatarFoto = avatarFotoDoUsuario(state.sfUsuarioId);
+    sfCarregarEquipe();
   }catch(e){
     console.error('Nao foi possivel carregar o usuario logado', e);
   }
@@ -1073,7 +1074,7 @@ function doLogout(){
   state.galeria = {};
   state.visitaDraft = null;
   state.contaEdit = null;
-  state.sfUsuarioId = null; state.avatarFoto = null;   /* a foto de um login nao fica para o proximo */
+  state.sfUsuarioId = null; state.avatarFoto = null; state.sfEquipe = null; state.sfEquipeLoaded = false;   /* a foto de um login nao fica para o proximo */
   state.mode = 'login';
   state.loginLoading = false;
   render({resetScroll:true});
@@ -2843,6 +2844,7 @@ function currentScreen(){
     case 'leadPerfil': return screenLeadPerfil(top.params.id);
     case 'leadEditar': return screenLeadEditar(top.params.id);
     case 'funil': return screenFunil();
+    case 'equipe': return screenEquipe();
     default: return {title:'', back:false, body:''};
   }
 }
@@ -3170,7 +3172,7 @@ function screenHome(){
         <button onclick="switchTab('negocios')"><b>${opAbertas==null?'—':opAbertas}</b><span>Oportunidades</span></button>
         <button onclick="go('comissoes',{}); sfCarregarComissoes()"><b class="kpi-money">${com?moedaCurta(com.aReceber):'—'}</b><span>Comissão a receber</span></button>
       </div>
-      <button class="funil-link" onclick="go('funil',{})">Ver meu funil ${I.next}</button>
+      <div class="home-links"><button class="funil-link" onclick="go('funil',{})">Ver meu funil ${I.next}</button>${equipeTem()?`<button class="funil-link" onclick="go('equipe',{})">Minha equipe ${I.next}</button>`:''}</div>
     </div>`;
 
   const agora = grupos[0];
@@ -5352,6 +5354,64 @@ function screenFunil(){
     </div>` : `<div class="sync-row"><span class="spinner"></span> Carregando comissões...</div>`}`;
 
   return {title:'Meu funil', back:true, hideTab:true, sub:'Onde estão seus leads, oportunidades e comissões', body: blocoLeads + blocoOps + blocoCom};
+}
+
+
+/* =====================================================================================
+   MINHA EQUIPE: para quem tem gente abaixo na hierarquia (diretor, superintendente, gerente): cada pessoa com leads abertos,
+   oportunidades abertas, reservas ativas e comissao a receber. Quem nao tem equipe nao ve o atalho nem a tela.
+   Dados: GET /equipe (CA_RestEquipe) - so o que o compartilhamento do Salesforce ja da ao gestor.
+   ===================================================================================== */
+async function sfCarregarEquipe(){
+  try{
+    state.sfEquipe = (await sfApi('/equipe')) || null;
+  }catch(e){
+    state.sfEquipe = null;
+    console.error('Nao foi possivel carregar a equipe', e);
+  }
+  state.sfEquipeLoaded = true;
+  render();
+}
+function equipeTem(){ return !!(state.sfEquipe && state.sfEquipe.membros && state.sfEquipe.membros.length); }
+/* arvore: raiz = quem responde direto a mim; filhos = quem responde a cada um */
+function equipeArvore(){
+  const membros = state.sfEquipe.membros;
+  const porGestor = {};
+  membros.forEach(m=>{ (porGestor[m.gestorId||'_raiz'] = porGestor[m.gestorId||'_raiz'] || []).push(m); });
+  const montar = (gid, nivel)=> (porGestor[gid]||[]).flatMap(m => [{m, nivel}, ...montar(m.id, nivel+1)]);
+  return montar('_raiz', 0);
+}
+function equipeCard(m, nivel){
+  const chip = (n, rotulo)=>`<span class="eq-chip"><b>${n}</b>${rotulo}</span>`;
+  const com = m.comissaoAReceber ? `<span class="eq-com">${moedaCurta(m.comissaoAReceber)} a receber</span>` : '';
+  return `<div class="eq-card eq-n${Math.min(nivel,2)}">
+    <span class="eq-av">${initials(m.nome)}</span>
+    <div class="eq-corpo">
+      <div class="eq-nome"><b>${esc(m.nome)}</b>${m.externo?'<em class="eq-parc">Parceiro</em>':''}</div>
+      <span class="eq-papel">${esc(m.nivel)}${m.papel && !m.papel.toLowerCase().includes(m.nivel.toLowerCase()) ? ' · '+esc(m.papel) : ''}</span>
+      <div class="eq-chips">${chip(m.leadsAbertos,'leads')}${chip(m.oportunidadesAbertas,'oportunidades')}${chip(m.reservasAtivas,'reservas')}</div>
+      ${com}
+    </div>
+  </div>`;
+}
+function screenEquipe(){
+  if(!state.sfEquipeLoaded) sfCarregarEquipe();
+  if(!state.sfEquipeLoaded){
+    return {title:'Minha equipe', back:true, hideTab:true, body:`<div class="sync-row" style="margin-top:8px;"><span class="spinner"></span> Carregando a equipe...</div>`};
+  }
+  if(!equipeTem()){
+    return {title:'Minha equipe', back:true, hideTab:true, body:`<div class="empty">Você não tem ninguém abaixo de você na hierarquia.</div>`};
+  }
+  const r = state.sfEquipe.resumo || {};
+  const resumo = `<div class="funil-duplo">
+      <div class="funil-mini"><b>${r.pessoas||0}</b><span>Pessoas</span><i>na sua equipe</i></div>
+      <div class="funil-mini"><b>${r.leadsAbertos||0}</b><span>Leads abertos</span><i>&nbsp;</i></div>
+      <div class="funil-mini"><b>${r.oportunidadesAbertas||0}</b><span>Oportunidades</span><i>${r.reservasAtivas||0} reserva${r.reservasAtivas===1?'':'s'} ativa${r.reservasAtivas===1?'':'s'}</i></div>
+      <div class="funil-mini"><b style="color:var(--sun-700,#8c6a00);">${moedaCurta(r.comissaoAReceber||0)}</b><span>Comissão a receber</span><i>da equipe</i></div>
+    </div>`;
+  const lista = equipeArvore().map(x=>equipeCard(x.m, x.nivel)).join('');
+  return {title:'Minha equipe', back:true, hideTab:true, sub:'Quem responde a você e como está cada um',
+    body: resumo + `<div class="section-title"><span>Equipe</span></div><div class="eq-lista">${lista}</div>`};
 }
 
 
