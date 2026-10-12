@@ -819,8 +819,9 @@ p{line-height:1.5;}
 .home-links{display:flex; gap:18px; flex-wrap:wrap;}
 .eq-lista{display:flex; flex-direction:column; gap:8px; margin-bottom:24px;}
 .eq-card{display:flex; gap:12px; padding:12px 14px; background:#fff; border:1px solid var(--grey-200); border-radius:var(--radius-lg);}
-.eq-card.eq-n1{margin-left:18px;}
-.eq-card.eq-n2{margin-left:36px;}
+.eq-card.eq-n1{margin-left:14px;}
+.eq-card.eq-n2{margin-left:28px;}
+.eq-card.eq-n3{margin-left:42px;}
 .eq-av{flex:0 0 40px; width:40px; height:40px; border-radius:50%; background:var(--blue-100,#dbeafe); color:var(--blue-700,#0b5cab); display:flex; align-items:center; justify-content:center; font:700 14px var(--font-display, inherit);}
 .eq-corpo{min-width:0; display:flex; flex-direction:column; gap:3px;}
 .eq-nome{display:flex; align-items:center; gap:8px; flex-wrap:wrap;}
