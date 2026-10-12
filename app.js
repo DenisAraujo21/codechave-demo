@@ -2858,6 +2858,7 @@ function render(opts={}){
   if(state.mode==='login'){
     $('tabbar').hidden = true;
     $('selbar').innerHTML = '';
+    { const fabAntigo = $('asFab'); if(fabAntigo) fabAntigo.remove(); }   /* o Arti so' existe depois do login */
     view0.innerHTML = screenLoginBody();
     renderOverlays();
     return;
