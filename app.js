@@ -5384,7 +5384,7 @@ function equipeArvore(){
 function equipeCard(m, nivel){
   const chip = (n, rotulo)=>`<span class="eq-chip"><b>${n}</b>${rotulo}</span>`;
   const com = m.comissaoAReceber ? `<span class="eq-com">${moedaCurta(m.comissaoAReceber)} a receber</span>` : '';
-  return `<div class="eq-card eq-n${Math.min(nivel,2)}">
+  return `<div class="eq-card eq-n${Math.min(nivel,3)}">
     <span class="eq-av">${initials(m.nome)}</span>
     <div class="eq-corpo">
       <div class="eq-nome"><b>${esc(m.nome)}</b>${m.externo?'<em class="eq-parc">Parceiro</em>':''}</div>
