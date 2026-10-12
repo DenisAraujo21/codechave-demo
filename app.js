@@ -5237,7 +5237,7 @@ function salvarLeadEditar(id){
    ===================================================================================== */
 const FUNIL_LEAD_ESTAGIOS = ['Novo','Em Contato','Contato Realizado','Em Atendimento','Qualificação'];
 const FUNIL_NEGOCIO_ROTULOS = {
-  'proposta enviada':'Proposta enviada', 'aguardando aprovacoes':'Aguardando aprovações',
+  'nova reserva':'Nova reserva', 'proposta enviada':'Proposta enviada', 'aguardando aprovacoes':'Aguardando aprovações',
   'confeccao de contrato':'Confecção de contrato', 'aguardando assinatura':'Aguardando assinatura',
   'contrato assinado':'Contrato assinado'
 };
