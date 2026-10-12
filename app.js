@@ -320,6 +320,8 @@ async function sfCarregarUsuario(){
     const info = await sfApi('/me');
     state.sfUsuarioNome = info.primeiroNome || (info.nome || '').split(' ')[0] || null;
     state.sfUsuarioNomeCompleto = info.nome || state.sfUsuarioNome;
+    state.sfUsuarioId = info.id || null;
+    state.avatarFoto = avatarFotoDoUsuario(state.sfUsuarioId);
   }catch(e){
     console.error('Nao foi possivel carregar o usuario logado', e);
   }
@@ -1071,6 +1073,7 @@ function doLogout(){
   state.galeria = {};
   state.visitaDraft = null;
   state.contaEdit = null;
+  state.sfUsuarioId = null; state.avatarFoto = null;   /* a foto de um login nao fica para o proximo */
   state.mode = 'login';
   state.loginLoading = false;
   render({resetScroll:true});
@@ -2738,9 +2741,12 @@ Object.assign(I, {
 });
 
 /* ---------- estado / navegacao (4 abas + botao +) ---------- */
-function avatarFotoCarregada(){
-  try{ return localStorage.getItem('codechave-avatar') || localStorage.getItem('codechave_avatar_foto') || null; }
-  catch(e){ return null; }
+/* a foto de perfil e' de cada usuario: a chave leva o Id do usuario do Salesforce, entao trocar de login (parceiro, interno, outro
+   corretor) no mesmo navegador nao mostra a foto do outro. Sem usuario identificado, nao ha foto. */
+function avatarFotoCarregada(){ return null; }
+function avatarFotoDoUsuario(id){
+  if(!id) return null;
+  try{ return localStorage.getItem('codechave-avatar:' + id) || null; }catch(e){ return null; }
 }
 function onAvatarFileChosen(event){
   const file = event.target.files && event.target.files[0];
@@ -2753,7 +2759,7 @@ function onAvatarFileChosen(event){
     canvas.getContext('2d').drawImage(img, (img.width-side)/2, (img.height-side)/2, side, side, 0, 0, size, size);
     const dataUrl = canvas.toDataURL('image/jpeg', 0.85);
     URL.revokeObjectURL(url);
-    try{ localStorage.setItem('codechave-avatar', dataUrl); }catch(e){}
+    if(state.sfUsuarioId){ try{ localStorage.setItem('codechave-avatar:' + state.sfUsuarioId, dataUrl); }catch(e){} }
     state.avatarFoto = dataUrl;
     render();
     toast('Foto de perfil atualizada');
