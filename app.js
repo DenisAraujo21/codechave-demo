@@ -2833,6 +2833,7 @@ function currentScreen(){
     case 'comparar': return screenComparar();
     case 'leadPerfil': return screenLeadPerfil(top.params.id);
     case 'leadEditar': return screenLeadEditar(top.params.id);
+    case 'funil': return screenFunil();
     default: return {title:'', back:false, body:''};
   }
 }
@@ -3159,6 +3160,7 @@ function screenHome(){
         <button onclick="switchTab('negocios')"><b>${opAbertas==null?'—':opAbertas}</b><span>Oportunidades</span></button>
         <button onclick="go('comissoes',{}); sfCarregarComissoes()"><b style="color:var(--sun-500);">${com?moedaCurta(com.aReceber):'—'}</b><span>Comissão a receber</span></button>
       </div>
+      <button class="funil-link" onclick="go('funil',{})">Ver meu funil ${I.next}</button>
     </div>`;
 
   const agora = grupos[0];
@@ -5226,6 +5228,76 @@ function salvarLeadEditar(id){
   sfApi(`/leads/${id}`, {method:'PATCH', body:JSON.stringify(dados)})
     .then(()=>{ goBack(); toast('Lead atualizado no Salesforce'); sfCarregarLeads(); })
     .catch(e=>{ if(btn){ btn.disabled = false; } toast('Não foi possível salvar o lead: '+e.message); });
+}
+
+
+/* =====================================================================================
+   MEU FUNIL: visao unica do corretor - leads por estagio, oportunidades por estagio e comissoes.
+   Cada linha leva para a lista ja filtrada (Leads por estagio, Oportunidades em andamento/ganhas).
+   ===================================================================================== */
+const FUNIL_LEAD_ESTAGIOS = ['Novo','Em Contato','Contato Realizado','Em Atendimento','Qualificação'];
+const FUNIL_NEGOCIO_ROTULOS = {
+  'proposta enviada':'Proposta enviada', 'aguardando aprovacoes':'Aguardando aprovações',
+  'confeccao de contrato':'Confecção de contrato', 'aguardando assinatura':'Aguardando assinatura',
+  'contrato assinado':'Contrato assinado'
+};
+function funilLinha(rotulo, qtd, max, apoio, onclick, tom){
+  const pct = max > 0 ? Math.max(qtd>0 ? 6 : 0, Math.round(qtd/max*100)) : 0;
+  return `<button class="funil-row" onclick="${onclick}">
+      <span class="funil-top"><span class="funil-rotulo">${esc(rotulo)}</span><span class="funil-qtd">${qtd}${apoio?`<i>${esc(apoio)}</i>`:''}</span></span>
+      <span class="funil-trilho"><span class="funil-barra ${tom||''}" style="width:${pct}%"></span></span>
+    </button>`;
+}
+function screenFunil(){
+  if(!state.sfNegociosLoaded) sfCarregarNegocios();
+  if(!state.sfComissoesLoaded) sfCarregarComissoes();
+
+  const nLeads = s => DB.leads.filter(l=>l.status===s).length;
+  const leadsQtd = FUNIL_LEAD_ESTAGIOS.map(s=>[s, nLeads(s)]);
+  const leadsMax = Math.max(1, ...leadsQtd.map(x=>x[1]));
+  const leadsAtivos = leadsQtd.reduce((s,x)=>s+x[1],0);
+
+  const abertas = DB.negocios.filter(n=>!n.fechada);
+  const porEstagio = Object.keys(FUNIL_NEGOCIO_ROTULOS).map(k=>{
+    const lista = abertas.filter(n=>semAcento(n.stageName)===k);
+    return [FUNIL_NEGOCIO_ROTULOS[k], lista.length, lista.reduce((s,n)=>s+(n.valor||0),0)];
+  });
+  const outras = abertas.filter(n=>!FUNIL_NEGOCIO_ROTULOS[semAcento(n.stageName)]);
+  if(outras.length) porEstagio.push(['Outros estágios', outras.length, outras.reduce((s,n)=>s+(n.valor||0),0)]);
+  const opMax = Math.max(1, ...porEstagio.map(x=>x[1]));
+  const valorAberto = abertas.reduce((s,n)=>s+(n.valor||0),0);
+  const ganhas = DB.negocios.filter(n=>n.fechada && n.ganha);
+  const perdidas = DB.negocios.filter(n=>n.fechada && !n.ganha);
+  const valorGanho = ganhas.reduce((s,n)=>s+(n.valor||0),0);
+
+  const com = comissoesTotais();
+
+  const blocoLeads = `
+    <div class="section-title" style="margin-top:0;"><span>Leads · ${leadsAtivos} ativos</span></div>
+    <div class="funil-card">
+      ${leadsQtd.map(([s,q])=>funilLinha(s, q, leadsMax, '', `irLeadsFiltro('${s}')`)).join('')}
+    </div>`;
+
+  const blocoOps = !state.sfNegociosLoaded
+    ? `<div class="section-title"><span>Oportunidades</span></div><div class="sync-row" style="margin-top:8px;"><span class="spinner"></span> Carregando oportunidades...</div>`
+    : `
+    <div class="section-title"><span>Oportunidades · ${abertas.length} em andamento</span>${valorAberto?`<span class="funil-valor">${moedaCurta(valorAberto)}</span>`:''}</div>
+    <div class="funil-card">
+      ${porEstagio.map(([r,q,v])=>funilLinha(r, q, opMax, v?moedaCurta(v):'', `state.opFiltro='andamento'; state.segN='negocios'; switchTab('negocios', true)`, 'sky')).join('')}
+    </div>
+    <div class="funil-duplo">
+      <button class="funil-mini" onclick="state.opFiltro='ganhas'; state.segN='negocios'; switchTab('negocios', true)"><b>${ganhas.length}</b><span>Ganhas</span><i>${valorGanho?moedaCurta(valorGanho):'—'}</i></button>
+      <button class="funil-mini" onclick="state.opFiltro='perdidas'; state.segN='negocios'; switchTab('negocios', true)"><b>${perdidas.length}</b><span>Perdidas</span><i>&nbsp;</i></button>
+    </div>`;
+
+  const blocoCom = `
+    <div class="section-title"><span>Comissões</span><button class="link-btn" onclick="go('comissoes',{}); sfCarregarComissoes()">Ver detalhes</button></div>
+    ${com ? `<div class="funil-duplo">
+      <div class="funil-mini"><b style="color:var(--sun-700,#8c6a00);">${moedaCurta(com.aReceber)}</b><span>A receber</span><i>${com.qtdAReceber} comiss${com.qtdAReceber===1?'ão':'ões'}</i></div>
+      <div class="funil-mini"><b>${moedaCurta(com.recebidoMes)}</b><span>Recebido no mês</span><i>Total ${moedaCurta(com.recebidoTotal)}</i></div>
+    </div>` : `<div class="sync-row"><span class="spinner"></span> Carregando comissões...</div>`}`;
+
+  return {title:'Meu funil', back:true, hideTab:true, sub:'Onde estão seus leads, oportunidades e comissões', body: blocoLeads + blocoOps + blocoCom};
 }
 
 
