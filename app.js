@@ -4920,15 +4920,26 @@ function screenAssistente(){
     + (a.enviando ? `<div class="as-bolha bot" style="opacity:.7;">Consultando...</div>` : '');
   const sug = ASSIST_SUGESTOES.map(s=>`<button onclick="perguntarAssistente('${s.replace(/'/g,"\\'")}')">${esc(s)}</button>`).join('');
   const body = `
-    <p class="as-aviso">O Arti é um assistente com inteligência artificial e só consulta os seus dados. Confira valores importantes no app.</p>
-    <div class="as-lista">${bolhas}</div>
-    <div class="as-sug">${sug}</div>
-    <form class="as-form" onsubmit="enviarAssistente(event)">
-      <input id="asInput" autocomplete="off" maxlength="500" placeholder="Pergunte sobre seus leads, negócios..." ${a.enviando?'disabled':''}>
-      <button type="submit" aria-label="Enviar" ${a.enviando?'disabled':''}>${I.arrowR}</button>
-    </form>`;
-  setTimeout(()=>{ if(a.rolar){ a.rolar = false; const v = $('view'); if(v) v.scrollTop = v.scrollHeight; const i = $('asInput'); if(i && !i.disabled) i.focus({preventScroll:true}); } }, 0);
+    <div class="as-tela">
+      <p class="as-aviso">O Arti é um assistente com inteligência artificial e só consulta os seus dados. Confira valores importantes no app.</p>
+      <div class="as-lista">${bolhas}</div>
+      <div class="as-rodape">
+        <div class="as-sug">${sug}</div>
+        <form class="as-form" onsubmit="enviarAssistente(event)">
+          <input id="asInput" autocomplete="off" maxlength="500" placeholder="Pergunte sobre seus leads, negócios..." ${a.enviando?'disabled':''}>
+          <button type="submit" aria-label="Enviar" ${a.enviando?'disabled':''}>${I.arrowR}</button>
+        </form>
+      </div>
+    </div>`;
+  setTimeout(()=>{ ajustarTelaAssistente(); if(a.rolar){ a.rolar = false; const v = $('view'); if(v) v.scrollTop = v.scrollHeight; const i = $('asInput'); if(i && !i.disabled) i.focus({preventScroll:true}); } }, 0);
   return {title:'Arti', back:true, hideTab:true, sub:'Assistente do corretor · IA', body};
+}
+/* faz a conversa ocupar a altura da tela para o campo de digitar ficar no rodape, como num chat */
+function ajustarTelaAssistente(){
+  const v = $('view'), w = document.querySelector('.as-tela');
+  if(!v || !w) return;
+  const livre = v.getBoundingClientRect().bottom - w.getBoundingClientRect().top - 12;
+  w.style.minHeight = Math.max(280, livre) + 'px';
 }
 function enviarAssistente(ev){
   ev.preventDefault();
