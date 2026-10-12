@@ -802,6 +802,6 @@ p{line-height:1.5;}
 .funil-leg-q em{font:500 12px var(--font-body, inherit); font-style:normal; color:var(--grey-500);}
 
 /* ---- Inicio: o valor da comissao nao pode vazar do quadrado ---- */
-.top.home-top .stats-dark.kpis{grid-template-columns:minmax(0,.8fr) minmax(0,.9fr) minmax(0,1.5fr);}
+.top.home-top .stats-dark.kpis{grid-template-columns:minmax(0,.78fr) minmax(0,1.1fr) minmax(0,1.42fr);}
 .stats-dark button b.kpi-money{color:var(--sun-500); font-size:clamp(17px,5.2vw,22px); letter-spacing:-.01em; max-width:100%;}
-.stats-dark button span{overflow-wrap:anywhere;}
+.top.home-top .stats-dark button span{overflow-wrap:normal; word-break:normal; font-size:11px;}
