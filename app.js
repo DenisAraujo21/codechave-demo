@@ -5248,6 +5248,33 @@ function funilLinha(rotulo, qtd, max, apoio, onclick, tom){
       <span class="funil-trilho"><span class="funil-barra ${tom||''}" style="width:${pct}%"></span></span>
     </button>`;
 }
+const FUNIL_CORES = ['#0b5cab','#3b8be0','#f2b705','#2e844a','#8e5bd9','#e2574c','#9aa3ad'];
+/* grafico de pizza em SVG puro: fatias por estagio, fatia com 8% ou mais mostra a quantidade */
+function funilPizza(fatias){
+  const total = fatias.reduce((s,f)=>s+f.qtd,0);
+  if(!total) return '';
+  const cx = 100, cy = 100, r = 92;
+  const ponto = a => [cx + r*Math.cos(a), cy + r*Math.sin(a)];
+  let ang = -Math.PI/2, partes = '';
+  fatias.forEach((f,i)=>{
+    const cor = FUNIL_CORES[i % FUNIL_CORES.length];
+    const frac = f.qtd/total;
+    if(frac >= 0.9999){
+      partes += `<circle cx="${cx}" cy="${cy}" r="${r}" fill="${cor}"/><text x="${cx}" y="${cy+6}" text-anchor="middle" class="funil-pizza-n">${f.qtd}</text>`;
+      return;
+    }
+    const a2 = ang + frac*2*Math.PI;
+    const [x1,y1] = ponto(ang), [x2,y2] = ponto(a2);
+    partes += `<path d="M${cx} ${cy} L${x1.toFixed(2)} ${y1.toFixed(2)} A${r} ${r} 0 ${frac>0.5?1:0} 1 ${x2.toFixed(2)} ${y2.toFixed(2)} Z" fill="${cor}" stroke="#fff" stroke-width="2"/>`;
+    if(frac >= 0.08){
+      const m = ang + (a2-ang)/2;
+      const tx = cx + r*0.62*Math.cos(m), ty = cy + r*0.62*Math.sin(m) + 5;
+      partes += `<text x="${tx.toFixed(1)}" y="${ty.toFixed(1)}" text-anchor="middle" class="funil-pizza-n">${f.qtd}</text>`;
+    }
+    ang = a2;
+  });
+  return `<svg class="funil-pizza" viewBox="0 0 200 200" role="img" aria-label="Oportunidades por estágio">${partes}</svg>`;
+}
 function screenFunil(){
   if(!state.sfNegociosLoaded) sfCarregarNegocios();
   if(!state.sfComissoesLoaded) sfCarregarComissoes();
@@ -5264,7 +5291,7 @@ function screenFunil(){
   });
   const outras = abertas.filter(n=>!FUNIL_NEGOCIO_ROTULOS[semAcento(n.stageName)]);
   if(outras.length) porEstagio.push(['Outros estágios', outras.length, outras.reduce((s,n)=>s+(n.valor||0),0)]);
-  const opMax = Math.max(1, ...porEstagio.map(x=>x[1]));
+  const fatias = porEstagio.filter(x=>x[1]>0).map(([rotulo,qtd,valor])=>({rotulo,qtd,valor}));
   const valorAberto = abertas.reduce((s,n)=>s+(n.valor||0),0);
   const ganhas = DB.negocios.filter(n=>n.fechada && n.ganha);
   const perdidas = DB.negocios.filter(n=>n.fechada && !n.ganha);
@@ -5282,8 +5309,15 @@ function screenFunil(){
     ? `<div class="section-title"><span>Oportunidades</span></div><div class="sync-row" style="margin-top:8px;"><span class="spinner"></span> Carregando oportunidades...</div>`
     : `
     <div class="section-title"><span>Oportunidades · ${abertas.length} em andamento</span>${valorAberto?`<span class="funil-valor">${moedaCurta(valorAberto)}</span>`:''}</div>
-    <div class="funil-card">
-      ${porEstagio.map(([r,q,v])=>funilLinha(r, q, opMax, v?moedaCurta(v):'', `state.opFiltro='andamento'; state.segN='negocios'; switchTab('negocios', true)`, 'sky')).join('')}
+    <div class="funil-card funil-pizza-card">
+      ${abertas.length ? funilPizza(fatias) : `<div class="empty">Nenhuma oportunidade em andamento</div>`}
+      <div class="funil-legenda">
+        ${fatias.map((f,i)=>`<button class="funil-leg" onclick="state.opFiltro='andamento'; state.segN='negocios'; switchTab('negocios', true)">
+          <i style="background:${FUNIL_CORES[i % FUNIL_CORES.length]}"></i>
+          <span class="funil-leg-r">${esc(f.rotulo)}</span>
+          <span class="funil-leg-q">${f.qtd}<em>${f.valor?moedaCurta(f.valor):''}</em></span>
+        </button>`).join('')}
+      </div>
     </div>
     <div class="funil-duplo">
       <button class="funil-mini" onclick="state.opFiltro='ganhas'; state.segN='negocios'; switchTab('negocios', true)"><b>${ganhas.length}</b><span>Ganhas</span><i>${valorGanho?moedaCurta(valorGanho):'—'}</i></button>
