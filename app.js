@@ -253,7 +253,7 @@ function sfRedirectUri(){
 const SF_CONFIG = {
   loginUrl: 'https://co1781648434036.my.salesforce.com',
   /* portal do corretor parceiro (Experience Cloud, licenca Partner Community): o login e a API passam pelo dominio do site */
-  portalUrl: 'https://co1781648434036.my.site.com/codechave',
+  portalUrl: 'https://co1781648434036.my.site.com/portalvforcesite',
   clientId: '3MVG9dAEux2v1sLuAlDQle4aL3TVKNC79C8BAYZcmy1XpTHrpbOKphEVGvgdNFbKpnWkDsAzmfZMXB0CkJ4Pc',
   redirectUri: sfRedirectUri(),
   apiPath: '/services/apexrest/codechave/v1',
