@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>CodeChave</title>
+<style>
+  @font-face{font-family:"All Round Gothic"; src:url("assets/fonts/AllRoundGothic-XLight.ttf") format("truetype"); font-weight:200; font-display:swap;}
+  @font-face{font-family:"All Round Gothic"; src:url("assets/fonts/AllRoundGothic-Book.ttf") format("truetype"); font-weight:400; font-display:swap;}
+  @font-face{font-family:"All Round Gothic"; src:url("assets/fonts/AllRoundGothic-Bold.ttf") format("truetype"); font-weight:700; font-display:swap;}
+  *{box-sizing:border-box; margin:0; padding:0;}
+  html,body{height:100%;}
+  body{
+    background:#303E47; color:#fff; font-family:"All Round Gothic","Segoe UI",Arial,sans-serif;
+    display:flex; flex-direction:column; justify-content:flex-end; overflow:hidden; position:relative;
+    padding:clamp(24px,6vw,56px);
+  }
+  .anel{position:absolute; right:-14vmin; top:9vmin; width:44vmin; height:44vmin; border-radius:50%; border:6vmin solid #FED600;}
+  .logo{position:absolute; left:clamp(24px,6vw,56px); top:clamp(24px,5vw,44px); width:min(210px,50%); height:auto;}
+  .ov{font-weight:400; font-size:12px; letter-spacing:.16em; text-transform:uppercase; color:#A6D9F4; margin-bottom:14px;}
+  h1{font-weight:200; font-size:clamp(34px,6.4vmin,60px); line-height:1.03; letter-spacing:-.02em; margin-bottom:16px; position:relative;}
+  h1 b{font-weight:700;}
+  p{font-size:clamp(14px,2.2vmin,18px); line-height:1.45; color:rgba(242,242,242,.78); max-width:30ch; position:relative;}
+  .conteudo{position:relative;}
+</style>
+</head>
+<body>
+  <div class="anel" aria-hidden="true"></div>
+  <img class="logo" src="assets/logo-login-250x125.png" alt="code art">
+  <div class="conteudo">
+    <div class="ov">CodeChave</div>
+    <h1>Sua carteira,<br><b>suas chaves.</b></h1>
+    <p>Proposta e reserva de imóveis, direto do bolso do corretor.</p>
+  </div>
+</body>
+</html>
