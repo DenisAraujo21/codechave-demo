@@ -4160,7 +4160,7 @@ function negocioCliente(n){
 }
 function screenNegocioDetail(id){
   sfCarregarNegocioDetalhe(id);
-  sfCarregarContratosNegocio(id);
+  if(!sfEhParceiro()) sfCarregarContratosNegocio(id);
   const n = negocioById(id);
   if(!n){
     return {title:'Negócio', back:true, body:`<div class="sync-row"><span class="spinner"></span> Carregando...</div>`};
@@ -4215,7 +4215,13 @@ function screenNegocioDetail(id){
   }
   return {title:'Negócio', back:true, top, body: tabs + panel};
 }
+/* corretor parceiro (login pelo site do portal) nao ve o contrato: so precisa saber se a oportunidade foi fechada/ganha */
+function sfEhParceiro(){ const s = sfSessionGet(); return !!(s && /\.my\.site\.com/.test(s.instanceUrl || '')); }
 function negocioContratoSection(n){
+  if(sfEhParceiro()){
+    return `<div class="section-title" style="margin-top:2px;">Situação</div>
+      <div class="kv-table"><div class="kv-row"><span class="k">Oportunidade</span><span class="v">${n.ganha ? 'Fechada · ganha' : n.fechada ? 'Fechada' : 'Em andamento'}</span></div></div>`;
+  }
   const contratos = state.sfContratosNegocio[n.id];
   return `
     <div class="section-title" style="margin-top:2px;">Contrato</div>
