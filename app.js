@@ -3451,7 +3451,7 @@ function iniciarPropostaConta(id){
 }
 function screenClienteDetail(id){
   const c = clienteById(id);
-  if(c.real){ sfCarregarContaDetalhe(id); sfCarregarBoletos(id); sfCarregarDocumentos(id); }
+  if(c.real){ sfCarregarContaDetalhe(id); if(!sfEhParceiro()) sfCarregarBoletos(id); sfCarregarDocumentos(id); }
   const tab = state.contaTab || 'reservas';
   const reservasMock = DB.reservas.filter(r=>r.clienteId===id);
   const reservasReais = (c.real && c.reservasReais) ? c.reservasReais : [];
