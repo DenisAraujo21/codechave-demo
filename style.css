@@ -76,13 +76,16 @@ html.standalone-app .bezel{display:none !important;}
 /* celular ou app instalado: cobre a tela inteira, inclusive as areas seguras do iPhone (topo e barra de baixo), sem faixa cinza */
 @media (max-width:659px), (display-mode:standalone), (display-mode:fullscreen){
   html,body{background:#303E47; overscroll-behavior:none;}
-  .stage{position:fixed; top:0; right:0; bottom:0; left:0; height:var(--app-h,auto); padding:0; display:block;}
+  .stage{position:fixed; top:0; right:0; bottom:0; left:0; height:auto; padding:0; display:block;}
   .rig{height:100%; display:block;}
   .device{width:100%; max-width:none; height:100%; max-height:none; aspect-ratio:auto; border-radius:0; box-shadow:none;}
   .bezel{display:none !important;}
 }
 html.standalone-app, html.standalone-app body{background:#303E47;}
-html.standalone-app .stage{position:fixed; top:0; right:0; bottom:0; left:0; height:var(--app-h,auto); padding:0; display:block;}
+html.faixa-baixo{--sab:0px;}
+/* faixa abaixo da janela do app (iPhone instalado): a cor da folha das telas, para parecer continuacao dela */
+html:has(.tabbar), html:has(.tabbar) body{background:var(--grey-50);}
+html.standalone-app .stage{position:fixed; top:0; right:0; bottom:0; left:0; height:auto; padding:0; display:block;}
 html.standalone-app .rig{height:100%; display:block;}
 html.standalone-app .device{width:100%;}
 @media (max-width:659px){
@@ -523,7 +526,7 @@ p{line-height:1.5;}
 
 /* ---------- tab bar flutuante + botao + ---------- */
 [hidden]{display:none !important}
-.tabbar{position:absolute; left:14px; right:14px; bottom:max(12px, calc(env(safe-area-inset-bottom,0px) - 6px)); height:66px; background:var(--charcoal-900); border-radius:999px; display:grid; grid-template-columns:1fr 1fr 64px 1fr 1fr; align-items:center; padding:0 6px; z-index:30; box-shadow:var(--shadow-lg);}
+.tabbar{position:absolute; left:14px; right:14px; bottom:max(12px, calc(var(--sab, env(safe-area-inset-bottom,0px)) - 6px)); height:66px; background:var(--charcoal-900); border-radius:999px; display:grid; grid-template-columns:1fr 1fr 64px 1fr 1fr; align-items:center; padding:0 6px; z-index:30; box-shadow:var(--shadow-lg);}
 .tab-btn{background:none; border:none; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:3px; padding:6px 0; cursor:pointer; color:rgba(242,242,242,.55); min-height:48px;}
 .tab-btn svg{width:21px; height:21px;}
 .tab-btn span{font-size:10.5px; font-weight:600;}
@@ -588,7 +591,7 @@ p{line-height:1.5;}
 .present .am svg{width:15px; height:15px; color:var(--sky-300);}
 
 /* ---------- aviso (toast) com Desfazer ---------- */
-.toast{position:absolute; left:16px; right:16px; bottom:calc(env(safe-area-inset-bottom,0px) + 80px); background:var(--charcoal-900); color:#fff; padding:12px 14px; border-radius:14px; font-size:13.5px; font-weight:600; box-shadow:var(--shadow-lg); display:flex; align-items:center; gap:10px; z-index:90; opacity:0; transform:translateY(8px); pointer-events:none; transition:opacity .18s ease, transform .18s ease;}
+.toast{position:absolute; left:16px; right:16px; bottom:calc(var(--sab, env(safe-area-inset-bottom,0px)) + 80px); background:var(--charcoal-900); color:#fff; padding:12px 14px; border-radius:14px; font-size:13.5px; font-weight:600; box-shadow:var(--shadow-lg); display:flex; align-items:center; gap:10px; z-index:90; opacity:0; transform:translateY(8px); pointer-events:none; transition:opacity .18s ease, transform .18s ease;}
 .toast.show{opacity:1; transform:none; pointer-events:auto;}
 .toast svg{width:18px; height:18px; color:var(--color-success); flex:0 0 auto;}
 .toast span.m{flex:1; min-width:0;}
@@ -651,7 +654,7 @@ p{line-height:1.5;}
 .as-txt b{font:700 16px var(--font-display); color:#F2F2F2;}
 .as-txt span:not(.as-tag){font-size:13px; color:#CBD1D5; line-height:1.35;}
 .as-tag{font:800 10px var(--font-display); letter-spacing:.04em; padding:2px 6px; border-radius:6px; background:var(--sun-500); color:var(--charcoal-700); margin-left:4px; vertical-align:middle;}
-.as-fab{position:absolute; right:16px; bottom:calc(env(safe-area-inset-bottom,0px) + 76px); z-index:29; display:flex; align-items:center; border:none; cursor:pointer; background:var(--charcoal-700); color:#F2F2F2; border-radius:999px; padding:4px; min-height:52px; box-shadow:var(--shadow-lg); font:inherit; font-weight:700; font-size:14px; white-space:nowrap;}
+.as-fab{position:absolute; right:16px; bottom:calc(var(--sab, env(safe-area-inset-bottom,0px)) + 76px); z-index:29; display:flex; align-items:center; border:none; cursor:pointer; background:var(--charcoal-700); color:#F2F2F2; border-radius:999px; padding:4px; min-height:52px; box-shadow:var(--shadow-lg); font:inherit; font-weight:700; font-size:14px; white-space:nowrap;}
 .as-fab .av{position:relative; width:44px; height:44px; border-radius:50%; background:var(--sun-500); display:flex; align-items:center; justify-content:center; flex:0 0 auto;}
 .as-fab .av img{width:38px; height:38px; object-fit:contain;}
 .as-fab .av b{position:absolute; right:-4px; bottom:-3px; font-size:9px; font-weight:800; line-height:1; padding:2px 4px; border-radius:5px; background:var(--charcoal-700); color:var(--sun-500); border:1.5px solid #fff;}
