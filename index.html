@@ -11,15 +11,16 @@
 <link rel="apple-touch-icon" href="apple-touch-icon.png">
 <meta name="theme-color" content="#303e47">
 <script>
-/* App instalado no iPhone: a area visivel as vezes fica menor que a tela (sobra uma faixa embaixo e o menu "flutua"). Mede a altura real e guarda em --app-h. */
+/* iPhone com o app instalado: a janela do app pode terminar acima do fim fisico da tela (sobra uma faixa embaixo). Nesse caso o menu nao precisa
+   reservar a area do indicador de inicio por conta propria: marca a pagina (classe faixa-baixo) para o CSS encostar o menu no fim da janela. */
 (function(){
-  function ajustar(){
+  function marcar(){
     var r = document.documentElement;
     var instalado = (navigator.standalone === true) || (window.matchMedia && window.matchMedia('(display-mode:standalone)').matches);
-    if(!instalado || window.innerWidth >= window.innerHeight){ r.style.removeProperty('--app-h'); return; }
-    r.style.setProperty('--app-h', Math.max(window.innerHeight, (window.screen && window.screen.height) || 0) + 'px');
+    var faixa = instalado && window.innerWidth < window.innerHeight && window.screen && (window.screen.height - window.innerHeight) > 40;
+    r.classList.toggle('faixa-baixo', !!faixa);
   }
-  ajustar(); window.addEventListener('resize', ajustar); window.addEventListener('orientationchange', ajustar);
+  marcar(); window.addEventListener('resize', marcar); window.addEventListener('orientationchange', marcar);
 })();
 </script>
 <meta name="mobile-web-app-capable" content="yes">
@@ -38,7 +39,7 @@
     document.documentElement.classList.add('standalone-app');
   }
 </script>
-<link rel="stylesheet" href="style.css?v=202610141039">
+<link rel="stylesheet" href="style.css?v=202610141051">
 </head>
 <body>
 
@@ -80,7 +81,7 @@
 <input type="file" id="doc-cam-input" accept="image/*" capture="environment" hidden onchange="handleDocUploadChange(event)">
 <input type="file" id="doc-file-input" accept="image/*,.pdf" hidden onchange="handleDocUploadChange(event)">
 
-<script src="app.js?v=202610141039"></script>
+<script src="app.js?v=202610141051"></script>
 
 <div id="pdfDoc"></div>
 </body>
