@@ -10,6 +10,18 @@
 <link rel="icon" href="icon-192.png">
 <link rel="apple-touch-icon" href="apple-touch-icon.png">
 <meta name="theme-color" content="#303e47">
+<script>
+/* App instalado no iPhone: a area visivel as vezes fica menor que a tela (sobra uma faixa embaixo e o menu "flutua"). Mede a altura real e guarda em --app-h. */
+(function(){
+  function ajustar(){
+    var r = document.documentElement;
+    var instalado = (navigator.standalone === true) || (window.matchMedia && window.matchMedia('(display-mode:standalone)').matches);
+    if(!instalado || window.innerWidth >= window.innerHeight){ r.style.removeProperty('--app-h'); return; }
+    r.style.setProperty('--app-h', Math.max(window.innerHeight, (window.screen && window.screen.height) || 0) + 'px');
+  }
+  ajustar(); window.addEventListener('resize', ajustar); window.addEventListener('orientationchange', ajustar);
+})();
+</script>
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
@@ -26,7 +38,7 @@
     document.documentElement.classList.add('standalone-app');
   }
 </script>
-<link rel="stylesheet" href="style.css?v=202610140956">
+<link rel="stylesheet" href="style.css?v=202610141039">
 </head>
 <body>
 
@@ -68,7 +80,7 @@
 <input type="file" id="doc-cam-input" accept="image/*" capture="environment" hidden onchange="handleDocUploadChange(event)">
 <input type="file" id="doc-file-input" accept="image/*,.pdf" hidden onchange="handleDocUploadChange(event)">
 
-<script src="app.js?v=202610140956"></script>
+<script src="app.js?v=202610141039"></script>
 
 <div id="pdfDoc"></div>
 </body>
