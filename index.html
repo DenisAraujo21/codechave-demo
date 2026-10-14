@@ -11,19 +11,6 @@
 <link rel="apple-touch-icon" href="apple-touch-icon.png">
 <meta name="theme-color" content="#303e47">
 <script>
-/* iPhone com o app instalado: a janela do app pode terminar acima do fim fisico da tela (sobra uma faixa embaixo). Nesse caso o menu nao precisa
-   reservar a area do indicador de inicio por conta propria: marca a pagina (classe faixa-baixo) para o CSS encostar o menu no fim da janela. */
-(function(){
-  function marcar(){
-    var r = document.documentElement;
-    var instalado = (navigator.standalone === true) || (window.matchMedia && window.matchMedia('(display-mode:standalone)').matches);
-    var faixa = instalado && window.innerWidth < window.innerHeight && window.screen && (window.screen.height - window.innerHeight) > 40;
-    r.classList.toggle('faixa-baixo', !!faixa);
-  }
-  marcar(); window.addEventListener('resize', marcar); window.addEventListener('orientationchange', marcar);
-})();
-</script>
-<script>
 // Diagnostico de tela: abra o app com ?diag=1, ou toque 5 vezes seguidas no canto superior esquerdo (funciona no app instalado). Linha vermelha = topo e verde = fim da area do app.
 (function(){
   var ligado = false;
@@ -57,9 +44,7 @@
     }
     medir(); setInterval(medir, 700);
   }
-  // TEMPORARIO: no app instalado o painel aparece sozinho, so para diagnosticar a faixa do iPhone (remover depois)
-  var instalado = (navigator.standalone === true) || (window.matchMedia && window.matchMedia('(display-mode:standalone)').matches);
-  if(instalado || /[?&]diag=1/.test(location.search)){ window.addEventListener('load', iniciar); return; }
+  if(/[?&]diag=1/.test(location.search)){ window.addEventListener('load', iniciar); return; }
   var toques = [];
   document.addEventListener('touchstart', function(e){
     var t = e.touches && e.touches[0]; if(!t || t.clientX > 90 || t.clientY > 150) return;
@@ -70,7 +55,7 @@
 </script>
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-capable" content="yes">
-<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-status-bar-style" content="black">
 <meta name="apple-mobile-web-app-title" content="CodeChave">
 <script>
   if('serviceWorker' in navigator){
@@ -84,7 +69,7 @@
     document.documentElement.classList.add('standalone-app');
   }
 </script>
-<link rel="stylesheet" href="style.css?v=202610141126">
+<link rel="stylesheet" href="style.css?v=202610141152">
 </head>
 <body>
 
@@ -126,7 +111,7 @@
 <input type="file" id="doc-cam-input" accept="image/*" capture="environment" hidden onchange="handleDocUploadChange(event)">
 <input type="file" id="doc-file-input" accept="image/*,.pdf" hidden onchange="handleDocUploadChange(event)">
 
-<script src="app.js?v=202610141126"></script>
+<script src="app.js?v=202610141152"></script>
 
 <div id="pdfDoc"></div>
 </body>
