@@ -2995,7 +2995,7 @@ function screenLoginBody(){
           ? `<div class="login-load"><span class="spinner" style="border-color:rgba(255,255,255,.2); border-top-color:var(--sky-500); width:16px; height:16px;"></span>Conectando à sua org Salesforce…</div>`
           : `<button class="btn btn-lg btn-accent" onclick="doLogin('parceiro')">Sou corretor parceiro ${I.arrowR}</button>
              <button class="btn btn-lg login-sec" onclick="doLogin()">Entrar com Salesforce (equipe interna)</button>`}
-        <div class="login-footer">Ambiente: Produção · v0.1</div>
+        <div class="login-footer">Versão beta · v0.1</div>
       </div>
     </div>`;
 }
