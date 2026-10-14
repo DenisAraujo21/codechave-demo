@@ -73,6 +73,18 @@ a{color:var(--text-link); text-decoration:none;}
 html.standalone-app .stage{padding:0;}
 html.standalone-app .device{width:100vw; max-width:none; height:100%; aspect-ratio:auto; border-radius:0; box-shadow:none;}
 html.standalone-app .bezel{display:none !important;}
+/* celular ou app instalado: cobre a tela inteira, inclusive as areas seguras do iPhone (topo e barra de baixo), sem faixa cinza */
+@media (max-width:659px), (display-mode:standalone), (display-mode:fullscreen){
+  html,body{background:#303E47; overscroll-behavior:none;}
+  .stage{position:fixed; top:0; right:0; bottom:0; left:0; height:auto; padding:0; display:block;}
+  .rig{height:100%; display:block;}
+  .device{width:100%; max-width:none; height:100%; max-height:none; aspect-ratio:auto; border-radius:0; box-shadow:none;}
+  .bezel{display:none !important;}
+}
+html.standalone-app, html.standalone-app body{background:#303E47;}
+html.standalone-app .stage{position:fixed; top:0; right:0; bottom:0; left:0; height:auto; padding:0; display:block;}
+html.standalone-app .rig{height:100%; display:block;}
+html.standalone-app .device{width:100%;}
 @media (max-width:659px){
   .stage{padding:0;} .device{width:100vw; max-width:none; height:100%; aspect-ratio:auto; border-radius:0; box-shadow:none;}
 }
