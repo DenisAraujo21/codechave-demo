@@ -10,49 +10,6 @@
 <link rel="icon" href="icon-192.png">
 <link rel="apple-touch-icon" href="apple-touch-icon.png">
 <meta name="theme-color" content="#303e47">
-<script>
-// Diagnostico de tela: abra o app com ?diag=1, ou toque 5 vezes seguidas no canto superior esquerdo (funciona no app instalado). Linha vermelha = topo e verde = fim da area do app.
-(function(){
-  var ligado = false;
-  function iniciar(){
-    if(ligado) return; ligado = true;
-    var sonda = document.createElement('div');
-    sonda.style.cssText = 'position:fixed;left:0;top:0;width:0;height:0;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px);padding-left:env(safe-area-inset-left,0px);padding-right:env(safe-area-inset-right,0px);visibility:hidden';
-    document.body.appendChild(sonda);
-    var topo = document.createElement('div'), fim = document.createElement('div'), painel = document.createElement('pre');
-    topo.style.cssText = 'position:fixed;left:0;right:0;top:0;height:6px;background:#e53935;z-index:2147483647;pointer-events:none';
-    fim.style.cssText = 'position:fixed;left:0;right:0;bottom:0;height:6px;background:#43a047;z-index:2147483647;pointer-events:none';
-    painel.style.cssText = 'position:fixed;left:8px;right:8px;top:50%;transform:translateY(-50%);margin:0;padding:10px;background:rgba(0,0,0,.82);color:#fff;font:11px/1.4 monospace;border-radius:8px;z-index:2147483647;white-space:pre-wrap;pointer-events:none';
-    document.body.appendChild(topo); document.body.appendChild(fim); document.body.appendChild(painel);
-    function medir(){
-      var cs = getComputedStyle(sonda), vv = window.visualViewport;
-      var m = function(q){ return window.matchMedia && window.matchMedia(q).matches; };
-      painel.textContent = [
-        'instalado (navigator.standalone): ' + navigator.standalone,
-        'display-mode standalone/fullscreen/browser: ' + m('(display-mode:standalone)') + ' / ' + m('(display-mode:fullscreen)') + ' / ' + m('(display-mode:browser)'),
-        'innerWidth x innerHeight: ' + innerWidth + ' x ' + innerHeight,
-        'outerWidth x outerHeight: ' + outerWidth + ' x ' + outerHeight,
-        'screen: ' + screen.width + ' x ' + screen.height + ' (avail ' + screen.availWidth + ' x ' + screen.availHeight + ')',
-        'visualViewport: ' + (vv ? Math.round(vv.width) + ' x ' + Math.round(vv.height) + ' topo ' + Math.round(vv.offsetTop) : 'n/d'),
-        'clientHeight html: ' + document.documentElement.clientHeight,
-        'safe-area topo/base/esq/dir: ' + cs.paddingTop + ' / ' + cs.paddingBottom + ' / ' + cs.paddingLeft + ' / ' + cs.paddingRight,
-        'fim da linha verde (bottom): ' + Math.round(fim.getBoundingClientRect().bottom),
-        'devicePixelRatio: ' + devicePixelRatio,
-        'classes html: ' + document.documentElement.className,
-        'UA: ' + navigator.userAgent
-      ].join('\n');
-    }
-    medir(); setInterval(medir, 700);
-  }
-  if(/[?&]diag=1/.test(location.search)){ window.addEventListener('load', iniciar); return; }
-  var toques = [];
-  document.addEventListener('touchstart', function(e){
-    var t = e.touches && e.touches[0]; if(!t || t.clientX > 90 || t.clientY > 150) return;
-    var agora = Date.now(); toques = toques.filter(function(x){ return agora - x < 3000; }); toques.push(agora);
-    if(toques.length >= 5 && document.body) iniciar();
-  }, {passive:true});
-})();
-</script>
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black">
@@ -69,7 +26,7 @@
     document.documentElement.classList.add('standalone-app');
   }
 </script>
-<link rel="stylesheet" href="style.css?v=202610141152">
+<link rel="stylesheet" href="style.css?v=202610141237">
 </head>
 <body>
 
@@ -111,7 +68,7 @@
 <input type="file" id="doc-cam-input" accept="image/*" capture="environment" hidden onchange="handleDocUploadChange(event)">
 <input type="file" id="doc-file-input" accept="image/*,.pdf" hidden onchange="handleDocUploadChange(event)">
 
-<script src="app.js?v=202610141152"></script>
+<script src="app.js?v=202610141237"></script>
 
 <div id="pdfDoc"></div>
 </body>
