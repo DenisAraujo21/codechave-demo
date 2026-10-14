@@ -57,7 +57,9 @@
     }
     medir(); setInterval(medir, 700);
   }
-  if(/[?&]diag=1/.test(location.search)){ window.addEventListener('load', iniciar); return; }
+  // TEMPORARIO: no app instalado o painel aparece sozinho, so para diagnosticar a faixa do iPhone (remover depois)
+  var instalado = (navigator.standalone === true) || (window.matchMedia && window.matchMedia('(display-mode:standalone)').matches);
+  if(instalado || /[?&]diag=1/.test(location.search)){ window.addEventListener('load', iniciar); return; }
   var toques = [];
   document.addEventListener('touchstart', function(e){
     var t = e.touches && e.touches[0]; if(!t || t.clientX > 90 || t.clientY > 150) return;
@@ -82,7 +84,7 @@
     document.documentElement.classList.add('standalone-app');
   }
 </script>
-<link rel="stylesheet" href="style.css?v=202610141117">
+<link rel="stylesheet" href="style.css?v=202610141126">
 </head>
 <body>
 
@@ -124,7 +126,7 @@
 <input type="file" id="doc-cam-input" accept="image/*" capture="environment" hidden onchange="handleDocUploadChange(event)">
 <input type="file" id="doc-file-input" accept="image/*,.pdf" hidden onchange="handleDocUploadChange(event)">
 
-<script src="app.js?v=202610141117"></script>
+<script src="app.js?v=202610141126"></script>
 
 <div id="pdfDoc"></div>
 </body>
